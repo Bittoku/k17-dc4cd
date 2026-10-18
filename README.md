@@ -42,7 +42,7 @@ variable sum  variable lo  variable hi
   dup sum @ + sum !   dup lo @ min lo !   hi @ max hi ! ;
 $ffffffff lo !  yield
 time DEADLINE - $80000000 and 0= if halt then     \ refund past the deadline
-EPOCH in over over 0 sigverify swap drop          \ hop 0: slot 0 attests (EPOCH+0, reading)
+TAG0 in over over 0 sigverify swap drop           \ hop 0: slot 0 attests (TAG0, reading)
 150 bounty  accumulate  yield
 ...
 3 out  sum @ out  sum @ 3 / out  lo @ out  hi @ out  halt

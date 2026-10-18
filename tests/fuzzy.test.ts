@@ -12,7 +12,13 @@ import {
     signReading,
     stepK,
 } from 'k17-vm'
-import { fuzzyProgram, fuzzyTag, packOpinion, FuzzyOptions } from '../src'
+import {
+    fuzzyProgram,
+    fuzzyTag,
+    packOpinion,
+    relayTag,
+    FuzzyOptions,
+} from '../src'
 import { T0, FUNDING, cycle, deploy, loadMachineArtifact } from './utils/chain'
 
 const OPTS: FuzzyOptions = {
@@ -20,6 +26,7 @@ const OPTS: FuzzyOptions = {
     epoch: 2000,
     threshold: 500,
     alarmBounty: 1000,
+    deadline: Number(T0) + 7 * 86400,
 }
 // slot 0 local, slots 1..2 neighbours: (temp.high, smoke.high) in 0..1000
 const OPINIONS = [
@@ -57,6 +64,48 @@ describe('fuzzy: reference VM', function () {
         expect(r.status).to.equal('halted')
         expect(outputLog(r.state)).to.deep.equal(EXPECTED)
         expect(r.bountyDue).to.equal(BigInt(OPTS.alarmBounty))
+    })
+
+    it('past the deadline any keeper can halt it and nothing is logged', () => {
+        const base = stepK(
+            initialState(fuzzyProgram(OPTS)),
+            T0,
+            K17Machine.K
+        ).state
+        const r = stepK(base, BigInt(OPTS.deadline), K17Machine.K)
+        expect(r.status).to.equal('halted')
+        expect(outputLog(r.state)).to.deep.equal([])
+    })
+
+    it('a relay attestation with the same epoch and slot is not a fuzzy attestation', () => {
+        const relayOpts = {
+            hops: 3,
+            epoch: OPTS.epoch,
+            deadline: OPTS.deadline,
+            bountyPerHop: 0,
+        }
+        expect(relayTag(relayOpts, 1)).to.not.equal(fuzzyTag(OPTS, 1))
+        const base = stepK(
+            initialState(fuzzyProgram(OPTS)),
+            T0,
+            K17Machine.K
+        ).state
+        const r = stepK(
+            base,
+            {
+                lockTime: T0 + 1n,
+                who: 0n,
+                witness: [OPINIONS[0]],
+                roster: attesters.map((a) => a.pub),
+                sig: signReading(
+                    attesters[0],
+                    relayTag(relayOpts, 0),
+                    OPINIONS[0]
+                ),
+            },
+            K17Machine.K
+        )
+        expect(r.status).to.equal('verify_failed')
     })
 
     it('stays quiet below the threshold and pays no bounty', () => {

@@ -9,16 +9,19 @@ variable nsum
 
 yield
 \ ---- local node (slot 0) measures
-2000 in over over 0 sigverify swap drop opinion local !
+time 1760604800 - $80000000 and 0= if halt then   \ past the deadline: refund
+536902912 in over over 0 sigverify swap drop opinion local !
 yield
 
 \ ---- neighbour 1 dispenses its opinion
-2001 in over over 1 sigverify swap drop opinion
+time 1760604800 - $80000000 and 0= if halt then   \ past the deadline: refund
+536902913 in over over 1 sigverify swap drop opinion
 nsum @ + nsum !
 yield
 
 \ ---- neighbour 2 dispenses its opinion
-2002 in over over 2 sigverify swap drop opinion
+time 1760604800 - $80000000 and 0= if halt then   \ past the deadline: refund
+536902914 in over over 2 sigverify swap drop opinion
 nsum @ + nsum !
 yield
 

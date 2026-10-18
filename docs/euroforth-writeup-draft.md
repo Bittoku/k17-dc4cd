@@ -79,7 +79,7 @@ variable sum  variable lo  variable hi
 $ffffffff lo !  yield
 \ hop 0
 time DEADLINE - $80000000 and 0= if halt then
-EPOCH in over over 0 sigverify swap drop  150 bounty  accumulate  yield
+TAG0 in over over 0 sigverify swap drop  150 bounty  accumulate  yield
 \ hop 1, hop 2: same with slot 1, slot 2
 3 out  sum @ out  sum @ 3 / out  lo @ out  hi @ out  halt
 ```

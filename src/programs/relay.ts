@@ -41,9 +41,19 @@ export interface RelayOptions {
     bountyPerHop: number
 }
 
-/** Attestation tag that roster member `k` must sign for this instance. */
+/** Program-type namespace of relay tags (high nibble 1). */
+export const RELAY_TAG_BASE = 0x10000000
+
+/**
+ * Attestation tag that roster member `k` must sign for this instance:
+ * RELAY_TAG_BASE + epoch * 16 + k. The namespace keeps relay and fuzzy
+ * tags disjoint even when their epochs coincide; the epoch must be below
+ * 2^24 and the slot below 16.
+ */
 export function relayTag(opts: RelayOptions, k: number): bigint {
-    return BigInt(opts.epoch + k)
+    if (opts.epoch < 0 || opts.epoch >= 1 << 24)
+        throw new Error('epoch must be in [0, 2^24)')
+    return BigInt(RELAY_TAG_BASE) + BigInt(opts.epoch) * 16n + BigInt(k)
 }
 
 /**
@@ -53,11 +63,11 @@ export function relayTag(opts: RelayOptions, k: number): bigint {
 export function relaySource(opts: RelayOptions): string {
     if (opts.hops < 1 || opts.hops > 4) throw new Error('hops must be 1..4')
     const hop = (k: number) => `
-\\ ---- hop ${k}: roster slot ${k} attests (epoch+${k}, reading)
+\\ ---- hop ${k}: roster slot ${k} attests (tag ${relayTag(opts, k)}, reading)
 time ${
         opts.deadline
     } - $80000000 and 0= if halt then   \\ past the deadline: refund
-${opts.epoch + k} in over over ${k} sigverify swap drop  \\ ( reading )
+${relayTag(opts, k)} in over over ${k} sigverify swap drop  \\ ( reading )
 ${opts.bountyPerHop} bounty
 accumulate
 yield`

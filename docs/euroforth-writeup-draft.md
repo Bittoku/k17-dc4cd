@@ -1,8 +1,9 @@
 # DC4CD §5.1 on a UTXO chain: what the ledger adds and what it costs
 
 **DRAFT — do not circulate.** Publication and any contact with the DC4CD authors
-wait for the filing receipt of the related provisional (script-verify candidate 25)
-per that candidate's `PUBLICATION-PLAN.md`. Numbers below are from the test suite
+wait until the K17 defensive publication is public (TDCommons, public repository,
+on-chain anchor) per script-verify candidate-25 `PUBLICATION-PLAN.md`, and for
+Dave's explicit go. Numbers below are from the test suite
 in this repository and `k17-vm` at the commits named in §6; re-measure before
 submission.
 

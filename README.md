@@ -20,7 +20,7 @@ trail — at the price of block latency and transaction fees.
 | `src/programs/fuzzy.ts` | DC4CD §5.2: distributed fuzzy fire detection as a demo. Attested packed opinions, fuzzy AND/OR with `min`/`max`, threshold, alarm bounty. |
 | `examples/*.fs` | The generated Forth source of both programs, for `npm run forth`. |
 | `docs/inter-machine-tell.md` | Design note for two machines messaging in one transaction (DC4CD's nested `tell:`). Parked: blocked on interpreter size. |
-| `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the related provisional is filed. |
+| `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the K17 defensive publication is public. |
 | `tests/` | Reference-VM and on-chain tests. Every on-chain cycle is verified with the bundled Bitcoin script interpreter. |
 
 ## Run

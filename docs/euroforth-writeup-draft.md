@@ -2,7 +2,8 @@
 
 **DRAFT — do not circulate.** Publication and any contact with the DC4CD authors
 wait until the K17 defensive publication is public (TDCommons, public repository,
-on-chain anchor) per script-verify candidate-25 `PUBLICATION-PLAN.md`, and for
+on-chain anchor) per `ppa-filings/candidate-25/PUBLICATION-PLAN.md` in the
+`script-verify-k17-ppa` repository, and for
 Dave's explicit go. Numbers below are from the test suite
 in this repository and `k17-vm` at the commits named in §6; re-measure before
 submission.

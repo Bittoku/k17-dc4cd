@@ -1,0 +1,40 @@
+{
+  "name": "k17-dc4cd",
+  "version": "0.1.0",
+  "description": "DC4CD-style symbolic distributed processing ported to the K17+ stack machine on Bitcoin SV: roster-attested aggregation relay, fuzzy demo, Forth-subset compiler",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "test": "cross-env NETWORK=local mocha",
+    "forth": "npx ts-node src/forth/cli.ts",
+    "lint": "eslint . --ext .ts --fix && prettier --write --ignore-unknown \"**/*\"",
+    "lint-check": "eslint . --ext .ts && prettier --check --ignore-unknown \"**/*\""
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "k17-vm": "file:../k17-vm",
+    "scrypt-ts": "1.4.5",
+    "scrypt-ts-lib": "^0.1.28"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.4",
+    "@types/chai-as-promised": "^7.1.5",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^18.11.10",
+    "@typescript-eslint/eslint-plugin": "^6.5.0",
+    "@typescript-eslint/parser": "^6.5.0",
+    "chai": "^4.3.6",
+    "chai-as-promised": "^7.1.1",
+    "cross-env": "^7.0.3",
+    "eslint": "^8.48.0",
+    "eslint-config-prettier": "^8.6.0",
+    "mocha": "^10.1.0",
+    "prettier": "^2.8.2",
+    "rimraf": "^3.0.2",
+    "ts-node": "^10.9.1",
+    "typescript": "~5.3.3"
+  },
+  "license": "MIT"
+}

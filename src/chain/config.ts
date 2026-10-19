@@ -83,10 +83,14 @@ export function loadConfig(path: string): GatewayConfig {
     try {
         doc = TOML.parse(readFileSync(path, 'utf8'))
     } catch (e) {
-        // The parser message gives a line and column, never the value.
-        throw new Error(
-            `config: ${path} is not valid TOML: ${(e as Error).message}`
-        )
+        // The parser message quotes the source line, which can hold a secret.
+        // Report only the row and column.
+        const { line, col } = e as { line?: number; col?: number }
+        const where =
+            typeof line === 'number' && typeof col === 'number'
+                ? ` at row ${line + 1}, col ${col + 1}`
+                : ''
+        throw new Error(`config: ${path} is not valid TOML${where}`)
     }
     const network = optionalString('network', table(doc, 'network'), 'name')
     if (network !== 'testnet' && network !== 'mainnet')

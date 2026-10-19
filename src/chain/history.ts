@@ -6,11 +6,15 @@
  * back until it reaches the deployment transaction (the one whose input 0
  * does not spend a K17 machine). For every cycle it reports the
  * transaction id, nLockTime, the keeper reward, the slot payout and the
- * machine state after the cycle.
+ * machine state after the cycle. The reward and payout come from a replay of
+ * the cycle (see `replayCycle`), never from guessing at the outputs.
  */
 
-import type { bsv } from 'scrypt-ts'
-import { DecodedMachine, decodeMachine } from './decode'
+import { bsv } from 'scrypt-ts'
+import { RabinSig } from 'scrypt-ts-lib'
+import { K17Machine, planCycle, pubKeyFromBytes } from 'k17-vm'
+import { decodeCells } from '../cli/scenario'
+import { DecodedInstance, DecodedMachine, decodeInstance } from './decode'
 
 /** The one provider method that the walk needs; tests give an in-memory map. */
 export interface TxSource {
@@ -32,10 +36,16 @@ export interface PayoutOutput {
 export interface DecodedCycle {
     txid: string
     lockTime: number
-    /** Satoshis paid to the keeper (0 when the reward output is absent). */
-    reward: number
+    /** Satoshis paid to the keeper (0 when the reward output is absent); null when ambiguous. */
+    reward: number | null
     /** The payout output, when the cycle paid a roster slot. */
     payout?: PayoutOutput
+    /**
+     * True when the cycle could not be replayed or the replay does not match
+     * the outputs. Then `reward` is null and `payout` is not set; the outputs
+     * are not guessed.
+     */
+    ambiguous: boolean
     /** True when output 0 is not a machine: the machine halted and refunded. */
     halted: boolean
     /** Machine state after the cycle, or null when halted. */
@@ -71,44 +81,106 @@ function p2pkhHash(scriptHex: string): string | undefined {
 }
 
 /**
- * Work out the keeper reward and the payout of one cycle.
- * Layout of the outputs: 0 state (or refund), then the keeper reward when it
- * is above 0, then the payout when the cycle ran PAYSLOT, then change. The
- * satoshis that left the machine (previous value less output 0) equal the
- * reward plus the payout. When only one output follows, it is the payout if
- * its address is a roster payout address, and the reward if not.
- * Input: the cycle transaction, the value of the spent machine output, and
- * the roster payout addresses of the previous state as slot-to-hex.
- * Output: reward and optional payout.
+ * Bytes of one script push, as hex.
+ * Input: a script chunk. Output: its data; empty for OP_0; one byte for the
+ * small-number opcodes OP_1NEGATE and OP_1..OP_16.
  */
-function splitOutputs(
+function chunkHex(chunk: any): string {
+    if (chunk.buf) return Buffer.from(chunk.buf).toString('hex')
+    const op: number = chunk.opcodenum
+    if (op === 0x4f) return '81'
+    if (op >= 0x51 && op <= 0x60)
+        return (op - 0x50).toString(16).padStart(2, '0')
+    return ''
+}
+
+/**
+ * Number of one script push (script number: little endian, sign in the top bit).
+ * Input: a script chunk. Output: the value; 0 for OP_0.
+ */
+function chunkNumber(chunk: any): bigint {
+    const bytes = Buffer.from(chunkHex(chunk), 'hex')
+    if (bytes.length === 0) return 0n
+    let magnitude = 0n
+    for (let i = bytes.length - 1; i >= 0; i--) {
+        const byte = i === bytes.length - 1 ? bytes[i] & 0x7f : bytes[i]
+        magnitude = (magnitude << 8n) | BigInt(byte)
+    }
+    return bytes[bytes.length - 1] & 0x80 ? -magnitude : magnitude
+}
+
+/** The reward and payout that a replay of the cycle gives. */
+interface Replay {
+    reward: number
+    payout?: PayoutOutput
+}
+
+/**
+ * Replay a cycle with the reference code to find the keeper reward and the
+ * payout, then check them against the real outputs.
+ * The unlocking script of input 0 starts with the arguments of `step` in
+ * order: keeper address, witness, sigS, sigPad, keyA, keyB, payout. Output 0
+ * is the state (or the refund), then the reward when above 0, then the PAYSLOT
+ * payout when the cycle made one.
+ * Input: the cycle transaction, the decoded machine that it spent, and the
+ * value of that machine output.
+ * Output: the reward and payout, or null when the unlocking script cannot be
+ * read, the replay throws, or its amounts differ from the outputs.
+ */
+function replayCycle(
     tx: bsv.Transaction,
-    previousValue: number,
-    rosterPayouts: Map<string, number>
-): { reward: number; payout?: PayoutOutput } {
-    const left = previousValue - tx.outputs[0].satoshis
-    const rest = tx.outputs.slice(1)
-    const payoutAt = (index: number): PayoutOutput | undefined => {
-        const out = rest[index]
-        const hash = out && p2pkhHash(out.script.toHex())
-        if (!out || !hash) return undefined
-        return {
-            vout: index + 1,
-            satoshis: out.satoshis,
-            addressHex: hash,
-            slot: rosterPayouts.get(hash),
+    previous: DecodedInstance,
+    previousValue: number
+): Replay | null {
+    try {
+        const chunks = tx.inputs[0].script.chunks
+        if (chunks.length < 7 || !previous.instance) return null
+        const keeperHex = chunkHex(chunks[0])
+        if (keeperHex.length !== 40) return null
+        const keyA = chunkHex(chunks[4])
+        const keyB = chunkHex(chunks[5])
+        const payoutHex = chunkHex(chunks[6])
+        const sig: RabinSig = {
+            s: chunkNumber(chunks[2]),
+            padding: chunkHex(chunks[3]),
         }
+        const plan = planCycle(
+            previous.instance as K17Machine,
+            BigInt(previousValue),
+            BigInt(tx.nLockTime),
+            bsv.Address.fromPublicKeyHash(Buffer.from(keeperHex, 'hex')),
+            decodeCells(chunkHex(chunks[1])),
+            sig,
+            {
+                attestKey: keyA ? pubKeyFromBytes(keyA) : undefined,
+                endorseKey: keyB ? pubKeyFromBytes(keyB) : undefined,
+                payoutHex: payoutHex || undefined,
+            }
+        )
+        const expected: number[] = []
+        if (plan.reward > 0n) expected.push(Number(plan.reward))
+        if (plan.payslot) expected.push(Number(plan.payslot.sats))
+        const rest = tx.outputs.slice(1)
+        if (tx.outputs[0].satoshis !== Number(plan.remaining)) return null
+        if (rest.length < expected.length) return null
+        if (expected.some((sats, i) => rest[i].satoshis !== sats)) return null
+        const reward = plan.reward > 0n ? Number(plan.reward) : 0
+        if (!plan.payslot) return { reward }
+        const index = plan.reward > 0n ? 1 : 0
+        const hash = p2pkhHash(rest[index].script.toHex())
+        if (hash !== plan.payslot.payoutHex) return null
+        return {
+            reward,
+            payout: {
+                vout: index + 1,
+                satoshis: rest[index].satoshis,
+                addressHex: hash,
+                slot: plan.payslot.slot,
+            },
+        }
+    } catch {
+        return null
     }
-    if (left <= 0 || rest.length === 0) return { reward: 0 }
-    if (rest[0].satoshis === left) {
-        const single = payoutAt(0)
-        return single && single.slot !== undefined
-            ? { reward: 0, payout: single }
-            : { reward: left }
-    }
-    if (rest.length > 1 && rest[0].satoshis + rest[1].satoshis === left)
-        return { reward: rest[0].satoshis, payout: payoutAt(1) }
-    return { reward: rest[0].satoshis }
 }
 
 /**
@@ -131,6 +203,15 @@ export async function walkHistory(
         }
         return tx
     }
+    const decodeCache = new Map<string, DecodedInstance>()
+    const decode = (scriptHex: string): DecodedInstance => {
+        let decoded = decodeCache.get(scriptHex)
+        if (!decoded) {
+            decoded = decodeInstance(scriptHex)
+            decodeCache.set(scriptHex, decoded)
+        }
+        return decoded
+    }
     const cycles: DecodedCycle[] = []
     let txid = parseOutpoint(outpoint).txid
     for (;;) {
@@ -140,23 +221,16 @@ export async function walkHistory(
         const previousOut = (await fetchTx(previousTxid)).outputs[
             tx.inputs[0].outputIndex
         ]
-        const previous =
-            previousOut && decodeMachine(previousOut.script.toHex())
+        const previous = previousOut && decode(previousOut.script.toHex())
         if (!previous || !previous.machine) break // this transaction is the deployment
-        const after = decodeMachine(tx.outputs[0].script.toHex())
-        const rosterPayouts = new Map(
-            previous.machine.roster.map((r) => [r.payoutHex, r.slot] as const)
-        )
-        const { reward, payout } = splitOutputs(
-            tx,
-            previousOut.satoshis,
-            rosterPayouts
-        )
+        const after = decode(tx.outputs[0].script.toHex())
+        const replay = replayCycle(tx, previous, previousOut.satoshis)
         cycles.push({
             txid: tx.id,
             lockTime: tx.nLockTime,
-            reward,
-            payout,
+            reward: replay ? replay.reward : null,
+            payout: replay?.payout,
+            ambiguous: replay === null,
             halted: !after.machine,
             state: after.machine,
         })

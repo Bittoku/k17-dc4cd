@@ -16,8 +16,11 @@ import {
     slotCells,
     withSlot,
     heartbeatProgram,
+    payoutOf,
 } from 'k17-vm'
-import { relayProgram } from '../src'
+import { compileToHex, relayProgram } from '../src'
+import { FUNDING, T0, cycle, keeper } from './utils/chain'
+import { getDefaultSigner } from './utils/txHelper'
 import { decodeMachine } from '../src/chain/decode'
 import { walkHistory, TxSource } from '../src/chain/history'
 import { loadConfig, describeConfig } from '../src/chain/config'
@@ -66,10 +69,32 @@ function machineAt(pc: bigint, lastTime: bigint): K17Machine {
 /** In-memory chain: txid to transaction. */
 class MemoryChain implements TxSource {
     txs = new Map<string, bsv.Transaction>()
+    /** Answer unknown ids with a stub funding transaction. */
+    stubUnknown = false
     async getTransaction(txid: string): Promise<bsv.Transaction> {
         const tx = this.txs.get(txid)
-        if (!tx) throw new Error(`unknown tx ${txid}`)
-        return tx
+        if (tx) return tx
+        if (!this.stubUnknown) throw new Error(`unknown tx ${txid}`)
+        // stands in for the wallet funding transaction of a real deployment
+        return new bsv.Transaction()
+            .addOutput(
+                new bsv.Transaction.Output({
+                    script: P2PKH(KEEPER_HEX),
+                    satoshis: 1,
+                })
+            )
+            .addOutput(
+                new bsv.Transaction.Output({
+                    script: P2PKH(KEEPER_HEX),
+                    satoshis: 1,
+                })
+            )
+            .addOutput(
+                new bsv.Transaction.Output({
+                    script: P2PKH(KEEPER_HEX),
+                    satoshis: 1,
+                })
+            )
     }
     add(tx: bsv.Transaction): string {
         this.txs.set(tx.id, tx)
@@ -94,6 +119,49 @@ function spend(
         tx.addOutput(new bsv.Transaction.Output({ script, satoshis }))
     tx.nLockTime = lockTime
     return tx
+}
+
+const keeperAddress = keeper
+
+/** A real two-cycle chain, built once: see realChain. */
+let realChainPromise: Promise<RealChain> | undefined
+
+interface RealChain {
+    chain: MemoryChain
+    deployTx: bsv.Transaction
+    cycle1: Awaited<ReturnType<typeof cycle>>
+    cycle2: Awaited<ReturnType<typeof cycle>>
+}
+
+/**
+ * Build (once) a deployed machine and two real cycles, checked by the script
+ * interpreter. The roster slot 0 payout is the keeper's own address.
+ * Cycle 1 only pays the keeper; cycle 2 also pays 300 sats to slot 0.
+ */
+function realChain(): Promise<RealChain> {
+    if (!realChainPromise)
+        realChainPromise = (async () => {
+            const mem = withSlot(
+                '0'.repeat(2048),
+                0,
+                slotCells('11'.repeat(32), payoutOf(keeperAddress))
+            )
+            const prog = compileToHex('yield 300 0 payslot yield yield')
+            const m = newMachine(prog, ECON, T0, undefined, mem)
+            await m.connect(getDefaultSigner())
+            const deployTx = await m.deploy(FUNDING)
+            const cycle1 = await cycle(m, BigInt(FUNDING), T0 + 100n)
+            const cycle2 = await cycle(
+                cycle1.next,
+                cycle1.plan.remaining,
+                T0 + 200n
+            )
+            const chain = new MemoryChain()
+            chain.stubUnknown = true
+            for (const tx of [deployTx, cycle1.tx, cycle2.tx]) chain.add(tx)
+            return { chain, deployTx, cycle1, cycle2 }
+        })()
+    return realChainPromise
 }
 
 describe('chain layer', function () {
@@ -147,7 +215,31 @@ describe('chain layer', function () {
     })
 
     describe('walkHistory', () => {
-        it('follows input 0 back to the deployment', async () => {
+        it('tells reward from payout by replay when keeper and payout address are the same', async () => {
+            const { chain, deployTx, cycle1, cycle2 } = await realChain()
+            expect(chain.txs.has(deployTx.id)).to.equal(true)
+            const cycles = await walkHistory(chain, `${cycle2.tx.id}:0`)
+            expect(cycles).to.have.length(2)
+            // cycle 1 pays only the keeper, whose address is also the slot payout
+            expect(cycles[0].txid).to.equal(cycle1.tx.id)
+            expect(cycles[0].ambiguous).to.equal(false)
+            expect(cycles[0].reward).to.equal(Number(cycle1.plan.reward))
+            expect(cycles[0].reward).to.be.greaterThan(0)
+            expect(cycles[0].payout).to.equal(undefined)
+            expect(cycles[0].lockTime).to.equal(Number(T0) + 100)
+            // cycle 2 pays the keeper and the slot, to the same address
+            expect(cycles[1].ambiguous).to.equal(false)
+            expect(cycles[1].reward).to.equal(Number(cycle2.plan.reward))
+            expect(cycles[1].payout).to.deep.include({
+                vout: 2,
+                satoshis: 300,
+                addressHex: payoutOf(keeperAddress),
+                slot: 0,
+            })
+            expect(cycles[1].state?.lastTime).to.equal(T0 + 200n)
+        })
+
+        it('marks a cycle ambiguous when it has no readable unlocking script', async () => {
             const chain = new MemoryChain()
             const funding = new bsv.Transaction().addOutput(
                 new bsv.Transaction.Output({
@@ -156,53 +248,26 @@ describe('chain layer', function () {
                 })
             )
             chain.add(funding)
-            const m0 = machineAt(0n, 1_760_000_000n)
-            const deploy = spend(funding, 0, [[m0.lockingScript, 10000]])
+            const deploy = spend(funding, 0, [
+                [machineAt(0n, 1n).lockingScript, 10000],
+            ])
             chain.add(deploy)
-            // cycle 1: reward 120 to the keeper, payout 300 to the roster slot
             const c1 = spend(
                 deploy,
                 0,
                 [
-                    [machineAt(3n, 1_760_000_100n).lockingScript, 9580],
+                    [machineAt(3n, 2n).lockingScript, 9880],
                     [P2PKH(KEEPER_HEX), 120],
-                    [P2PKH(PAYOUT_HEX), 300],
                 ],
-                1_760_000_100
+                2
             )
             chain.add(c1)
-            // cycle 2: reward 0, so the payout is output 1
-            const c2 = spend(
-                c1,
-                0,
-                [
-                    [machineAt(6n, 1_760_000_200n).lockingScript, 9380],
-                    [P2PKH(PAYOUT_HEX), 200],
-                ],
-                1_760_000_200
-            )
-            chain.add(c2)
-
-            const cycles = await walkHistory(chain, `${c2.id}:0`)
-            expect(cycles).to.have.length(2)
-            expect(cycles[0].txid).to.equal(c1.id)
-            expect(cycles[0].lockTime).to.equal(1_760_000_100)
-            expect(cycles[0].reward).to.equal(120)
-            expect(cycles[0].payout).to.deep.include({
-                vout: 2,
-                satoshis: 300,
-                addressHex: PAYOUT_HEX,
-                slot: 0,
-            })
+            const cycles = await walkHistory(chain, c1.id)
+            expect(cycles).to.have.length(1)
+            expect(cycles[0].ambiguous).to.equal(true)
+            expect(cycles[0].reward).to.equal(null)
+            expect(cycles[0].payout).to.equal(undefined)
             expect(cycles[0].state?.pc).to.equal(3)
-            expect(cycles[1].txid).to.equal(c2.id)
-            expect(cycles[1].reward).to.equal(0)
-            expect(cycles[1].payout).to.deep.include({
-                vout: 1,
-                satoshis: 200,
-                slot: 0,
-            })
-            expect(cycles[1].state?.pc).to.equal(6)
         })
 
         it('returns no cycles for the deployment output itself', async () => {
@@ -248,7 +313,7 @@ describe('chain layer', function () {
             expect(cycles).to.have.length(1)
             expect(cycles[0].halted).to.equal(true)
             expect(cycles[0].state).to.equal(null)
-            expect(cycles[0].reward).to.equal(100)
+            expect(cycles[0].ambiguous).to.equal(true)
         })
     })
 
@@ -322,6 +387,23 @@ sign_anyway = true
             expect(() => loadConfig(b)).to.throw('wif')
         })
 
+        it('does not echo a malformed secret line from a TOML error', () => {
+            const path = join(dir, 'broken.toml')
+            writeFileSync(
+                path,
+                '[network]\nname = "testnet"\n[wallet]\nwif = cLEAKEDSECRET99\n'
+            )
+            chmodSync(path, 0o600)
+            let message = ''
+            try {
+                loadConfig(path)
+            } catch (e) {
+                message = (e as Error).message
+            }
+            expect(message).to.contain('not valid TOML at row 4, col 7')
+            expect(message).to.not.contain('LEAKEDSECRET')
+        })
+
         it('never shows secrets in its description', () => {
             const path = join(dir, 'desc.toml')
             writeFileSync(path, body)
@@ -378,8 +460,43 @@ sign_anyway = true
     })
 
     describe('inspect', () => {
-        /** Chain with a deployment and one cycle; returns the tip txid. */
-        function build(): { chain: MemoryChain; tip: string } {
+        it('prints the state of the output', async () => {
+            const { chain, cycle2 } = await realChain()
+            const out: string[] = []
+            const code = await inspectCommand(
+                [cycle2.tx.id],
+                { out: (l) => out.push(l), err: (l) => out.push('ERR ' + l) },
+                chain
+            )
+            expect(code).to.equal(0)
+            const text = out.join('\n')
+            expect(text).to.contain('pc ')
+            expect(text).to.contain(`lastTime ${T0 + 200n}`)
+            expect(text).to.contain(
+                `roster 0 key=11111111.. payout=${payoutOf(keeperAddress)}`
+            )
+            expect(text).to.not.contain('ERR')
+        })
+
+        it('prints history with --history', async () => {
+            const { chain, cycle1, cycle2 } = await realChain()
+            const out: string[] = []
+            await inspectCommand(
+                [`${cycle2.tx.id}:0`, '--history'],
+                { out: (l) => out.push(l), err: () => undefined },
+                chain
+            )
+            const text = out.join('\n')
+            expect(text).to.contain('history (2 cycles')
+            expect(text).to.contain(cycle1.tx.id)
+            expect(text).to.contain(`reward ${cycle1.plan.reward} ->`)
+            expect(text).to.contain(
+                `payout 300 to ${payoutOf(keeperAddress)} (slot 0)`
+            )
+            expect(text).to.not.contain('ambiguous')
+        })
+
+        it('says so when a cycle is ambiguous', async () => {
             const chain = new MemoryChain()
             const funding = new bsv.Transaction().addOutput(
                 new bsv.Transaction.Output({
@@ -389,73 +506,48 @@ sign_anyway = true
             )
             chain.add(funding)
             const deploy = spend(funding, 0, [
-                [machineAt(0n, 1_760_000_000n).lockingScript, 10000],
+                [machineAt(0n, 1n).lockingScript, 10000],
             ])
             chain.add(deploy)
             const c1 = spend(
                 deploy,
                 0,
                 [
-                    [machineAt(3n, 1_760_000_100n).lockingScript, 9880],
+                    [machineAt(3n, 2n).lockingScript, 9880],
                     [P2PKH(KEEPER_HEX), 120],
                 ],
-                1_760_000_100
+                2
             )
             chain.add(c1)
-            return { chain, tip: c1.id }
-        }
-
-        it('prints the state of the output', async () => {
-            const { chain, tip } = build()
-            const out: string[] = []
-            const code = await inspectCommand(
-                [tip],
-                { out: (l) => out.push(l), err: (l) => out.push('ERR ' + l) },
-                chain
-            )
-            expect(code).to.equal(0)
-            const text = out.join('\n')
-            expect(text).to.contain('pc 3')
-            expect(text).to.contain(
-                `roster 0 key=11111111.. payout=${PAYOUT_HEX}`
-            )
-            expect(text).to.not.contain('ERR')
-        })
-
-        it('prints history with --history', async () => {
-            const { chain, tip } = build()
             const out: string[] = []
             await inspectCommand(
-                [`${tip}:0`, '--history'],
+                [c1.id, '--history'],
                 { out: (l) => out.push(l), err: () => undefined },
                 chain
             )
-            const text = out.join('\n')
-            expect(text).to.contain(tip)
-            expect(text).to.contain('reward 120')
-            expect(text).to.contain('lockTime 1760000100')
+            expect(out.join('\n')).to.contain('ambiguous')
         })
 
         it('prints one JSON object with --json', async () => {
-            const { chain, tip } = build()
+            const { chain, cycle2 } = await realChain()
             const out: string[] = []
             await inspectCommand(
-                [tip, '--history', '--json'],
+                [cycle2.tx.id, '--history', '--json'],
                 { out: (l) => out.push(l), err: () => undefined },
                 chain
             )
             const parsed = JSON.parse(out.join('\n'))
-            expect(parsed.machine.pc).to.equal(3)
-            expect(parsed.history).to.have.length(1)
-            expect(parsed.history[0].reward).to.equal(120)
-            expect(parsed.machine.lastTime).to.equal('1760000100')
+            expect(parsed.machine.lastTime).to.equal((T0 + 200n).toString())
+            expect(parsed.history).to.have.length(2)
+            expect(parsed.history[1].payout.slot).to.equal(0)
+            expect(parsed.history[1].ambiguous).to.equal(false)
         })
 
         it('explains when the output is not a machine', async () => {
-            const { chain, tip } = build()
+            const { chain, cycle2 } = await realChain()
             const err: string[] = []
             const code = await inspectCommand(
-                [`${tip}:1`],
+                [`${cycle2.tx.id}:1`],
                 { out: () => undefined, err: (l) => err.push(l) },
                 chain
             )

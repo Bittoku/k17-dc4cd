@@ -57,6 +57,12 @@ function machineLines(machine: DecodedMachine): string[] {
  * Input: the cycle. Output: the line.
  */
 function cycleLine(cycle: DecodedCycle): string {
+    if (cycle.ambiguous)
+        return `${cycle.txid} lockTime ${
+            cycle.lockTime
+        } ambiguous: the cycle could not be replayed, so reward and payout are not known -> ${
+            cycle.state ? `pc ${cycle.state.pc}` : 'halted'
+        }`
     const payout = cycle.payout
         ? ` payout ${cycle.payout.satoshis} to ${cycle.payout.addressHex}` +
           (cycle.payout.slot !== undefined

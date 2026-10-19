@@ -77,6 +77,9 @@ export async function cycle(
         toByteString(plan.witnessHex),
         plan.sig.s,
         toByteString(plan.sig.padding),
+        toByteString(plan.keyAHex),
+        toByteString(plan.keyBHex),
+        toByteString(plan.payoutHex),
         opts
     )
     const verdict = tx.verifyInputScript(atInputIndex)

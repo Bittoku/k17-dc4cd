@@ -49,8 +49,11 @@ export class ForthCompileError extends Error {
     }
 }
 
-/** Number of memory cells on the K17 machine. */
-const MEMORY_CELLS = 64
+/**
+ * Number of memory cells a program may use for variables. Cells from
+ * ROSTER_BASE up are the write-protected roster on the K17+ v2 machine.
+ */
+const MEMORY_CELLS = ROSTER_BASE
 /** Modulus of a K17 cell (2^32). */
 const CELL_MODULUS = 0x100000000n
 

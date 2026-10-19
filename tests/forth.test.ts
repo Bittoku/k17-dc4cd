@@ -152,8 +152,18 @@ describe('forth compiler', () => {
 
         it('rejects a user word named value', () => {
             expect(compileError(': value 1 ;').message).to.contain(
-                'invalid name'
+                "invalid name 'value'"
             )
+        })
+
+        it('allows 152 variables and rejects the 153rd with its line', () => {
+            const names = Array.from({ length: 153 }, (_, i) => `v${i}`)
+            const lines = names.map((name) => `variable ${name}`)
+            const ok = compile(lines.slice(0, 152).join('\n'))
+            expect(Object.keys(ok.variables)).to.have.length(152)
+            const e = compileError(lines.join('\n'))
+            expect(e.line).to.equal(153)
+            expect(e.message).to.contain('max 152')
         })
 
         it('rejects a user constant named roster-base', () => {

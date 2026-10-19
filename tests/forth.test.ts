@@ -6,7 +6,13 @@
 
 import { expect } from 'chai'
 import { fibonacciProgram, initialState, outputLog, run } from 'k17-vm'
-import { compile, compileToHex, ForthCompileError } from '../src/forth'
+import {
+    compile,
+    compileToHex,
+    cycleInstructionCounts,
+    ForthCompileError,
+} from '../src/forth'
+import { relaySource } from '../src/programs/relay'
 
 const LOCK_TIME = 1760000000n
 
@@ -115,6 +121,77 @@ describe('forth compiler', () => {
             const e = compileError(': a\n  b ;\n: b 1 out ;')
             expect(e.line).to.equal(2)
             expect(e.message).to.contain('forward')
+        })
+    })
+
+    describe('v2 instructions and roster constants', () => {
+        it('compiles attest endorse payslot value to mnemonics', () => {
+            expect(
+                compile('attest endorse payslot value').tokens
+            ).to.deep.equal(['ATTEST', 'ENDORSE', 'PAYSLOT', 'VALUE', 'HALT'])
+        })
+
+        it('compiles roster constants to literals', () => {
+            expect(
+                compile('roster-base slot-cells roster-slots mem-cells out-max')
+                    .tokens
+            ).to.deep.equal([
+                'LIT',
+                152,
+                'LIT',
+                13,
+                'LIT',
+                8,
+                'LIT',
+                256,
+                'LIT',
+                256,
+                'HALT',
+            ])
+        })
+
+        it('rejects a user word named value', () => {
+            expect(compileError(': value 1 ;').message).to.contain(
+                'invalid name'
+            )
+        })
+
+        it('rejects a user constant named roster-base', () => {
+            expect(compileError('5 constant roster-base').message).to.contain(
+                'invalid name'
+            )
+        })
+    })
+
+    describe('cycleInstructionCounts', () => {
+        it('counts instructions between yields', () => {
+            expect(
+                cycleInstructionCounts([
+                    'LIT',
+                    1,
+                    'YIELD',
+                    'L:',
+                    'DUP',
+                    'DROP',
+                    'YIELD',
+                    'HALT',
+                ])
+            ).to.deep.equal([2, 3, 1])
+        })
+
+        it('gives a 4 instruction deployment cycle for the relay', () => {
+            const counts = cycleInstructionCounts(
+                compile(
+                    relaySource({
+                        hops: 3,
+                        epoch: 1000,
+                        deadline: 1760000000 + 7 * 86400,
+                        bountyPerHop: 150,
+                    })
+                ).tokens
+            )
+            expect(counts[0]).to.equal(4)
+            counts.forEach((count) => expect(count).to.be.at.most(40))
         })
     })
 })

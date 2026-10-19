@@ -14,7 +14,14 @@
  * An unconditional jump is written `LIT 0 IF label`.
  */
 
-import { assemble } from 'k17-vm'
+import {
+    assemble,
+    MEM_CELLS,
+    OUT_MAX,
+    ROSTER_BASE,
+    ROSTER_SLOTS,
+    SLOT_CELLS,
+} from 'k17-vm'
 
 /** Result of a compilation. */
 export interface CompileResult {
@@ -76,11 +83,25 @@ const PRIMITIVES: ReadonlySet<string> = new Set([
     'min',
     'max',
     '/',
+    'attest',
+    'endorse',
+    'payslot',
+    'value',
 ])
+
+/** Built-in constants that compile to `LIT n`. They may not be redefined. */
+const BUILTIN_CONSTANTS: Readonly<Record<string, number>> = {
+    'roster-base': ROSTER_BASE,
+    'slot-cells': SLOT_CELLS,
+    'roster-slots': ROSTER_SLOTS,
+    'mem-cells': MEM_CELLS,
+    'out-max': OUT_MAX,
+}
 
 /** Words with a built-in meaning that a program may not redefine. */
 const RESERVED: ReadonlySet<string> = new Set([
     ...PRIMITIVES,
+    ...Object.keys(BUILTIN_CONSTANTS),
     'bounty',
     'sigverify',
     ':',
@@ -270,6 +291,8 @@ export function compile(source: string): CompileResult {
         const numeric = parseNumber(text)
         if (numeric !== null) {
             out.push('LIT', numeric)
+        } else if (text in BUILTIN_CONSTANTS) {
+            out.push('LIT', BUILTIN_CONSTANTS[text])
         } else if (PRIMITIVES.has(text)) {
             out.push(text.toUpperCase())
         } else if (text === 'bounty' || text === 'sigverify') {
@@ -389,4 +412,27 @@ export function compile(source: string): CompileResult {
  */
 export function compileToHex(source: string): string {
     return assemble(compile(source).tokens)
+}
+
+/**
+ * Count the instructions in each cycle of a token list. A cycle ends at each
+ * `YIELD` (the `YIELD` counts in the cycle it ends). Labels (`name:`) and the
+ * numeric operands that follow `LIT`, `BOUNTY` and similar are not counted.
+ * The first cycle starts at the program start; the last ends at the end of
+ * the token list. Input: tokens from compile(). Output: one count per cycle.
+ */
+export function cycleInstructionCounts(tokens: (string | number)[]): number[] {
+    const counts: number[] = []
+    let current = 0
+    for (const token of tokens) {
+        if (typeof token !== 'string') continue
+        if (token.endsWith(':')) continue
+        current++
+        if (token === 'YIELD') {
+            counts.push(current)
+            current = 0
+        }
+    }
+    counts.push(current)
+    return counts
 }

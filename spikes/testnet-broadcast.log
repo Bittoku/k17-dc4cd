@@ -4,12 +4,8 @@
       not also include their own bsv dependency.
 network=testnet dry=false provider=default
 funding address: mna7mVra5dB7xiJiR4GYTzu1dGkXGjz3Md
-WhatsOnChain balance: {"confirmed":10000000,"unconfirmed":0}
-provider.getBalance: {"confirmed":20000000,"unconfirmed":0}
-deploy heartbeat: txid=9dec68139ce28c3687dd3289079b5ab7759afb826e3a7e95c0740a4d7e75d0e5 size=359129 ms=6867
-[hb-1] txid=0feca1d9f334ed317f1d7ce82acf8497a5a5bbe12d7b7f5d6518731143e39014 size=719485 fee=720 broadcast_ms=4115 response=accepted (txid 0feca1d9f334ed317f1d7ce82acf8497a5a5bbe12d7b7f5d6518731143e39014)
-[hb-2] REJECTED after 4579 ms: WhatsonchainProvider ERROR: "unexpected response code 500: 64: too-long-non-final-chain"
-
-SPIKE FAILED: WhatsonchainProvider ERROR: "unexpected response code 500: 64: too-long-non-final-chain"
-
+WhatsOnChain balance: {"confirmed":9979637,"unconfirmed":0}
+provider.getBalance: {"confirmed":9979637,"unconfirmed":0}
+mediantime=1792383218 wall=1792386169 lag=2951s
+SPIKE FAILED: GorillapoolProvider ERROR: ERROR: 258: txn-mempool-conflict
 EXIT 1

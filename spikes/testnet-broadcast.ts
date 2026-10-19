@@ -169,12 +169,20 @@ async function main() {
     }
 
     const econ = { beneficiary: addrOf(address), ...ECON_NUMBERS }
-    const start = Math.floor(Date.now() / 1000) - 600
+    // Run 2: lock times anchored to the chain's median time past (MTP), not wall
+    // clock (MTP lags ~48 min on testnet). Last cycle's lockTime = MTP - 300 s,
+    // cycles 60 s apart, so every transaction is final.
+    const TOTAL_CYCLES = 12 // 8 heartbeat... see loops below (10 hb + 2 attest)
+    const info = DRY ? { mediantime: Math.floor(Date.now() / 1000) - 3000 } : await wocGet('/chain/info')
+    const mtp = Number(info.mediantime)
+    if (!mtp) throw new Error(`no mediantime: ${JSON.stringify(info)}`)
+    console.log(`mediantime=${mtp} wall=${Math.floor(Date.now() / 1000)} lag=${Math.floor(Date.now() / 1000) - mtp}s`)
+    const start = mtp - 300 - 60 * TOTAL_CYCLES
     const deployTime = BigInt(start)
     let n = 0
     const nextLock = () => BigInt(start + 60 * ++n)
 
-    // Machine 1: heartbeat, 8 cycles.
+    // Machine 1: heartbeat, 10 cycles.
     const m1 = newMachine(heartbeatProgram(), econ, deployTime)
     await m1.connect(signer)
     let t0 = Date.now()
@@ -184,7 +192,7 @@ async function main() {
 
     let m: K17Machine | undefined = m1
     let value = BigInt(DEPOSIT)
-    for (let i = 1; i <= 8 && m; i++) {
+    for (let i = 1; i <= 10 && m; i++) {
         const r = await runCycle(`hb-${i}`, m, value, nextLock(), address)
         m = r.next
         value = r.remaining

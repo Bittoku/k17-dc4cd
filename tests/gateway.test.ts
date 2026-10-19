@@ -35,7 +35,7 @@ import { loadConfig } from '../src/chain/config'
 import { decodeMachine } from '../src/chain/decode'
 import { openBridge } from '../src/gateway/bridge'
 import { GatewayAttester } from '../src/gateway/attester'
-import { Gateway } from '../src/gateway/gateway'
+import { Gateway, NOT_DELIVERED } from '../src/gateway/gateway'
 import { gatewayCommand } from '../src/cli/gateway'
 import { main } from '../src/cli/k17forth'
 import {
@@ -264,6 +264,23 @@ describe('gateway: run loop', function () {
         expect(outLogOf(chain, gateway)).to.deep.equal([5231n])
         expect(lines.join('\n')).to.contain('delivered 1 earned 150 sats')
         expectNoSecret(lines)
+    })
+
+    it('with once, exits with NOT_DELIVERED when the reading is refused', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(true)
+        const before = chain.cycleBroadcasts
+        const lines: string[] = []
+        const gateway = new Gateway(cfg, chain, signer, {
+            bridge: openBridge(Readable.from(['R 9000\n'])), // out of range
+            keeper: keeperOptions(chain),
+            now: () => OPTS.start + 100,
+            intervalMs: 20,
+            once: true,
+            out: (line) => lines.push(line),
+        })
+        expect(await gateway.run()).to.equal(NOT_DELIVERED)
+        expect(lines.join('\n')).to.contain('reading out of range')
+        expect(chain.cycleBroadcasts).to.equal(before)
     })
 
     it('refuses a reading after the last round closed and broadcasts nothing', async () => {

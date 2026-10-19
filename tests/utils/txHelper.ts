@@ -6,27 +6,39 @@ import * as dotenv from 'dotenv'
 // Load the .env file
 dotenv.config()
 
-const wallets: Record<string, TestWallet> = {
-    testnet: new TestWallet(
-        myPrivateKey,
-        new DefaultProvider({
-            network: bsv.Networks.testnet,
-        })
-    ),
-    local: new TestWallet(myPrivateKey, new DummyProvider()),
-    mainnet: new TestWallet(
-        myPrivateKey,
-        new DefaultProvider({
-            network: bsv.Networks.mainnet,
-        })
-    ),
+/**
+ * The test wallet of a network, made when it is first asked for. A
+ * `DefaultProvider` connects to the network when it is made, so the
+ * testnet and mainnet wallets exist only when NETWORK names them.
+ * Input: network name ('local', 'testnet' or 'mainnet'). Output: the wallet.
+ */
+const wallets: Record<string, TestWallet> = {}
+function walletOf(network: string): TestWallet {
+    if (!wallets[network])
+        wallets[network] =
+            network === 'local'
+                ? new TestWallet(myPrivateKey, new DummyProvider())
+                : new TestWallet(
+                      myPrivateKey,
+                      new DefaultProvider({
+                          network:
+                              network === 'mainnet'
+                                  ? bsv.Networks.mainnet
+                                  : bsv.Networks.testnet,
+                      })
+                  )
+    return wallets[network]
 }
+
+/**
+ * The signer of the tests: the wallet of the NETWORK environment variable
+ * (default 'local', an offline DummyProvider).
+ * Input: optional extra private keys. Output: the wallet.
+ */
 export function getDefaultSigner(
     privateKey?: bsv.PrivateKey | bsv.PrivateKey[]
 ): TestWallet {
-    const network = process.env.NETWORK || 'local'
-
-    const wallet = wallets[network]
+    const wallet = walletOf(process.env.NETWORK || 'local')
 
     if (privateKey) {
         wallet.addPrivateKey(privateKey)

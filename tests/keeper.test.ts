@@ -405,6 +405,25 @@ describe('keeper helpers', () => {
         expect(isConflictError('HTTP 500: input too large')).to.equal(false)
     })
 
+    it('fails a read of an unknown txid after readAttempts tries', async function () {
+        this.timeout(20_000)
+        let reads = 0
+        const base = new DummyProvider()
+        base.getTransaction = async () => {
+            reads++
+            throw new Error('Not Found')
+        }
+        const provider = makeProvider('testnet', { base, readAttempts: 2 })
+        let message = ''
+        try {
+            await provider.getTransaction('ab'.repeat(32))
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.equal('Not Found')
+        expect(reads).to.equal(2)
+    })
+
     it('retries a WhatsOnChain call that is rate limited (HTTP 429)', async () => {
         const statuses = [429, 429, 200]
         let calls = 0
@@ -516,9 +535,13 @@ describe('keeper helpers', () => {
         expect(await wocUnspent('testnet', address, fetchFn)).to.deep.equal(
             expected
         )
-        // The provider of the tools lists the same outputs.
+        // The provider of the tools lists the same outputs. A stub base
+        // provider: no test reaches the network.
         urls.length = 0
-        const provider = makeProvider('testnet', fetchFn)
+        const provider = makeProvider('testnet', {
+            fetch: fetchFn,
+            base: new DummyProvider(),
+        })
         expect(
             await provider.listUnspent(bsv.Address.fromString(address))
         ).to.deep.equal(expected)

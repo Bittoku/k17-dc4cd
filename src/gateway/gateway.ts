@@ -116,6 +116,9 @@ const UNKNOWN = '?'
 /** Exit code of `run` when the bridge failed. */
 export const BRIDGE_FAILED = 1
 
+/** Exit code of `run` with `once` when no reading was delivered. */
+export const NOT_DELIVERED = 3
+
 /** Relays the readings of one slot into one consortium machine. */
 export class Gateway {
     private readonly keeper: Keeper
@@ -259,7 +262,9 @@ export class Gateway {
      * Run until the bridge ends or the machine halts: one tick per reading
      * and one tick per interval. With `once`, stop after the first reading
      * is delivered and paid, dropped or refused. Each status line goes to `out`.
-     * Output: 0 when the bridge ended or the machine halted; BRIDGE_FAILED
+     * Output: 0 when the bridge ended or the machine halted; with `once`,
+     * NOT_DELIVERED when the reading was refused or dropped, or the bridge
+     * ended before a reading, or the machine halted first; BRIDGE_FAILED
      * when the bridge failed (the error goes to `out`, with the secrets
      * hidden). Never throws for chain errors (they are status lines).
      */
@@ -278,6 +283,7 @@ export class Gateway {
         }, this.intervalMs)
         let next: Promise<IteratorResult<number>> | undefined
         let code = 0
+        let deliveredOnce = false
         try {
             const iterator = this.bridge[Symbol.asyncIterator]()
             while (!this.halted) {
@@ -296,10 +302,8 @@ export class Gateway {
                         await this.queue
                     }
                     // The cycle after the attest cycle pays the slot.
-                    if (
-                        this.deliveredRounds.size > deliveredBefore &&
-                        !this.halted
-                    )
+                    deliveredOnce = this.deliveredRounds.size > deliveredBefore
+                    if (deliveredOnce && !this.halted)
                         await this.enqueue(() => this.tickIdle(), stop)
                     break
                 }
@@ -317,6 +321,7 @@ export class Gateway {
                 ;(this.bridge as Partial<Bridge>).close?.()
             }
         }
+        if (code === 0 && this.once && !deliveredOnce) return NOT_DELIVERED
         return code
     }
 

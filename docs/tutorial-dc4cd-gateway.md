@@ -4,6 +4,8 @@ This tutorial connects a DC4CD sensor network to a K17 consortium machine on Bit
 
 Use testnet for all the steps in this tutorial. Read the section "Before you go to mainnet" before you use real money.
 
+The examples call the tool `k17forth`. To get this command, run `npm install`, `npm run build` and `npm link` in this repository. Without the link, use `npm run k17forth --` in place of `k17forth`.
+
 ## What you keep and what you add
 
 You keep your DC4CD network. The motes, the radio and the Forth words on the motes do not change.
@@ -113,7 +115,6 @@ Write the program with `consortiumSource` from this package:
 ```bash
 npx ts-node -e "
 const { consortiumSource } = require('./src')
-const { keyHash } = require('k17-vm')
 require('fs').writeFileSync('consortium.fs', consortiumSource({
   slots: 3, rounds: 2, epoch: 7, start: 1792391947, period: 1800,
   enrolDeadline: 1792391947, bountyPerReading: 200, floor: 1000,
@@ -159,7 +160,7 @@ k17forth endorse --config sponsor.toml --member <public key of landowner 1> \
 The command checks that the sponsor key is in roster slot 0 of the machine. It signs the endorsement and relays it in one cycle. On the first endorsement it runs the first cycle of the program before the endorsement. It prints the txid and the slot:
 
 ```
-endorsed slot 2 txid c7a4616de5201977798d4e694d8bf4655458b032f2c14ce9ef9e8b70c2a6b979 lockTime 1792391346 (mtp 1792391347) -> c7a4616d...:0
+endorsed slot 1 txid 9be22d15495cc21f4986629477bb69aa9b5c8ac3d115f9f99c68eccc16accd3b lockTime 1792391346 (mtp 1792391347) -> 9be22d15...:0
 ```
 
 The machine enrols slots in order: 1, then 2, then 3. It refuses an endorsement after `enrolDeadline`. Enrol all landowners before that time.
@@ -178,7 +179,9 @@ The gateway reads the bridge mote. For each reading it prints one status line:
 round 0 slot 1 delivered 1 earned 200 sats: cycle 46a14d1f... lockTime 1792391346 (mtp 1792391347) reward 100 -> 46a14d1f...:0
 ```
 
-The line shows the round and the slot. It shows the paid readings and the satoshis that the slot earned. Then it shows the cycle of this tick. To relay one reading and stop, add `--once`. Then the gateway stops after the machine pays the reading.
+The line shows the round and the slot. It shows the paid readings and the satoshis that the slot earned. Then it shows the cycle of this tick.
+
+To relay one reading and stop, add `--once`. Then the gateway stops after the machine pays the reading. With `--once`, the exit code is 0 only when the machine accepted the reading. It is 3 when the gateway refused the reading or the machine rejected it.
 
 The sponsor starts a keeper:
 

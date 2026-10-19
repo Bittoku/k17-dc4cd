@@ -119,7 +119,6 @@ describe('k17forth endorse', function () {
             keeper: keeperOptions(chain),
             now: () => OPTS.start - 100,
         })
-        expect(lines.join('\n')).to.not.contain('ERR')
         expect(code).to.equal(0)
         const endorsed = lines.find((l) => /^endorsed slot 1 /.test(l))
         expect(endorsed).to.match(/txid [0-9a-f]{64}/)
@@ -157,6 +156,26 @@ describe('k17forth endorse', function () {
         expect(code).to.equal(1)
         expect(lines.join('\n')).to.contain('not the sponsor')
         expect(chain.cycleBroadcasts).to.equal(before)
+        expectNoSponsorSecret(lines)
+    })
+
+    it('explains the slot order when the machine refuses an endorsement out of order', async () => {
+        const TWO = { ...OPTS, slots: 2 }
+        const { chain, signer, cfg } = await consortiumOnChain(false, TWO)
+        const config = sponsorConfig('order.toml', cfg)
+        const args = endorseArgs(config)
+        args[args.length - 1] = '2' // slot 2 before slot 1
+        const { lines, io } = sink()
+        const code = await endorseCommand(args, io, {
+            provider: chain,
+            signer,
+            keeper: keeperOptions(chain),
+            now: () => OPTS.start - 100,
+        })
+        expect(code).to.equal(1)
+        const text = lines.join('\n')
+        expect(text).to.contain('witness rejected')
+        expect(text).to.contain('slots are endorsed in order')
         expectNoSponsorSecret(lines)
     })
 

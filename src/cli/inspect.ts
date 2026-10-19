@@ -125,7 +125,8 @@ export async function inspectCommand(
         return 2
     }
     try {
-        const chain: TxSource = source ?? (makeProvider(network) as Provider)
+        const chain: TxSource =
+            source ?? (makeProvider(network, { readAttempts: 2 }) as Provider)
         const tx = await chain.getTransaction(outpoint.txid)
         const output = tx.outputs[outpoint.vout]
         if (!output) {

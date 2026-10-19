@@ -12,7 +12,8 @@
  * `gateway run --config <gw.toml> [--interval <seconds>] [--once]` runs a
  * `Gateway` on the bridge (`[bridge] serial`, else standard input) until the
  * bridge ends or the machine halts; with `--once` it stops after the first
- * reading is delivered, dropped or refused. A bridge error ends it with
+ * reading is delivered, dropped or refused, with exit code 0 only when the
+ * machine accepted the reading (else 3). A bridge error ends it with
  * exit code 1. A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
@@ -61,7 +62,7 @@ export interface GatewayCommandDeps {
  * Input: arguments after `gateway`, an output sink and optional test parts.
  * Output: exit code: 0 on success, 1 when the config cannot be used or the
  * bridge failed, 2 on wrong arguments (or a mainnet config without the
- * switch).
+ * switch), 3 for `run --once` when no reading was delivered.
  */
 export async function gatewayCommand(
     args: string[],

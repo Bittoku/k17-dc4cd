@@ -51,7 +51,7 @@ npm run forth examples/relay.fs
 | `endorse --config <sponsor.toml> --member <key> --payout <addr> --slot <n>` | The sponsor enrols a landowner key into a roster slot. |
 | `keeper --config <toml>` | Advances the machine, one cycle per tick, until it stops. |
 | `gateway init --config <toml>` | Makes the Rabin key of a landowner and prints what the sponsor needs. |
-| `gateway run --config <toml> [--once]` | Signs the bridge readings and relays them. With `--once` it stops after one paid reading. |
+| `gateway run --config <toml> [--once]` | Signs the bridge readings and relays them. With `--once` it stops after one reading: exit code 0 when the machine paid it, 3 when it was refused or rejected. |
 
 Each command that spends money refuses mainnet without `--i-know-this-spends-real-money`. No command prints the wallet key or a Rabin prime.
 

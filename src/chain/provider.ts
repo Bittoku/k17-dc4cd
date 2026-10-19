@@ -183,68 +183,60 @@ export async function wocUnspent(
         }))
 }
 
-/**
- * A `DefaultProvider` that lists coins with `wocUnspent` and retries the
- * transient WhatsOnChain errors.
- */
-class MempoolAwareProvider extends DefaultProvider {
+/** Options of `makeProvider`. */
+export interface ProviderOptions {
+    /** Fetch function of the coin lists. Default: `wocFetch`. */
+    fetch?: FetchLike
     /**
-     * Make the provider.
-     * Input: network name and the fetch function for the coin lists.
+     * The provider to wrap. Default: a scrypt-ts `DefaultProvider` for the
+     * network (it connects to WhatsOnChain when it is made). Tests pass a
+     * stub so that no test reaches the network.
      */
-    constructor(
-        private readonly networkName: NetworkName,
-        private readonly fetchFn: FetchLike
-    ) {
-        super({
-            network:
-                networkName === 'testnet'
-                    ? bsv.Networks.testnet
-                    : bsv.Networks.mainnet,
-        })
-    }
-
+    base?: Provider
     /**
-     * The spendable coins of an address (`wocUnspent`).
-     * Input: the address. The query options of the base class are not
-     * used: the wallet picks from the whole list. Output: the coins.
+     * Most attempts of a transaction read that fails with "Not Found" or a
+     * rate limit. Default: READ_ATTEMPTS_AFTER_BROADCAST, for tools that
+     * read their own new transactions. A reader of old transactions
+     * (`inspect`) passes a small number, so a wrong txid fails fast.
      */
-    async listUnspent(address: AddressOption): Promise<UTXO[]> {
-        return wocUnspent(this.networkName, address.toString(), this.fetchFn)
-    }
-
-    /**
-     * Read a transaction; retry while it is not yet found (just broadcast)
-     * or the call rate is limited.
-     * Input: txid. Output: the transaction. Throws the last error.
-     */
-    async getTransaction(txid: string): Promise<bsv.Transaction> {
-        return withRetry(() => super.getTransaction(txid), TRANSIENT_READ)
-    }
-
-    /**
-     * Broadcast a transaction; retry while the call rate is limited.
-     * Input: raw transaction hex. Output: the txid. Throws the last error.
-     */
-    async sendRawTransaction(rawTxHex: string): Promise<string> {
-        return withRetry(
-            () => super.sendRawTransaction(rawTxHex),
-            TRANSIENT_SEND
-        )
-    }
+    readAttempts?: number
 }
+
+/** Read attempts for a transaction that can be a few seconds old. */
+export const READ_ATTEMPTS_AFTER_BROADCAST = 6
 
 /**
  * Make the chain provider for a network.
- * Input: network name and an optional fetch function for the coin lists.
- * Output: a `DefaultProvider` for it that lists coins with `wocUnspent`
- * and retries transient errors (`withRetry`).
+ * Input: network name and options. Output: the base provider (by default a
+ * `DefaultProvider` for the network), changed in place so that it lists
+ * coins with `wocUnspent`, retries "Not Found" and rate-limited reads up to
+ * `readAttempts` times, and retries rate-limited broadcasts (`withRetry`).
  */
 export function makeProvider(
     network: NetworkName,
-    fetchFn: FetchLike = wocFetch
+    options: ProviderOptions = {}
 ): Provider {
-    return new MempoolAwareProvider(network, fetchFn)
+    const fetchFn = options.fetch ?? wocFetch
+    const readAttempts = options.readAttempts ?? READ_ATTEMPTS_AFTER_BROADCAST
+    const provider =
+        options.base ??
+        new DefaultProvider({
+            network:
+                network === 'testnet'
+                    ? bsv.Networks.testnet
+                    : bsv.Networks.mainnet,
+        })
+    const getTransaction = provider.getTransaction.bind(provider)
+    const sendRawTransaction = provider.sendRawTransaction.bind(provider)
+    // The query options of the base listUnspent are not used: the wallet
+    // picks from the whole list.
+    provider.listUnspent = (address: AddressOption): Promise<UTXO[]> =>
+        wocUnspent(network, address.toString(), fetchFn)
+    provider.getTransaction = (txid: string): Promise<bsv.Transaction> =>
+        withRetry(() => getTransaction(txid), TRANSIENT_READ, readAttempts)
+    provider.sendRawTransaction = (rawTxHex: string): Promise<string> =>
+        withRetry(() => sendRawTransaction(rawTxHex), TRANSIENT_SEND)
+    return provider
 }
 
 /**

@@ -39,4 +39,7 @@ held write-up belong here.
 - `K17Machine.step` has 10 parameters (the last three are `leafPre`, `proof`, `leafIndex`), and the history
   decoder (`decodeUnlocking` in `src/chain/history.ts`) reads 10 unlocking-script chunks. Pass all three
   from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`.
+- The `keeper` command never supplies a roster-tree proof to `planCycle`, so it cannot relay MEMBER,
+  ADMIT or REMOVE cycles yet; on such a machine it reports `plan: ...` and broadcasts nothing (fails safe).
+  Tree-mode relaying is a later plan.
 - Testnet only for live runs. Secrets (WIF, Rabin primes) never go into logs, docs or notes.

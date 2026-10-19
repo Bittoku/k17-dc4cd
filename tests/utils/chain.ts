@@ -7,6 +7,7 @@ import { bsv, toByteString } from 'scrypt-ts'
 import { RabinSig } from 'scrypt-ts-lib'
 import {
     K17Machine,
+    CycleKeys,
     CyclePlan,
     NO_SIG,
     Roster,
@@ -41,12 +42,19 @@ export async function loadMachineArtifact(): Promise<void> {
     await K17Machine.loadArtifact(artifact)
 }
 
-/** Deploy `prog` with the given roster and return the live instance. */
+/**
+ * Deploy `prog` and return the live instance.
+ * Input: program hex, fixed SIGVERIFY roster (default empty), optional
+ * initial memory image (e.g. with the sponsor in memory roster slot 0).
+ * Output: the deployed machine; its random `instanceId` is what ATTEST and
+ * ENDORSE signatures must bind.
+ */
 export async function deploy(
     prog: string,
-    roster: Roster = rosterOf()
+    roster: Roster = rosterOf(),
+    initialMemHex?: string
 ): Promise<K17Machine> {
-    const m = newMachine(prog, ECON, T0, roster)
+    const m = newMachine(prog, ECON, T0, roster, initialMemHex)
     await m.connect(getDefaultSigner())
     await m.deploy(FUNDING)
     return m
@@ -62,15 +70,19 @@ export interface CycleResult {
 /**
  * Run one cycle at `lockTime`, verify the unlocking script with the
  * interpreter, and return the next instance (undefined once halted).
+ * Input: instance, its UTXO value, nLockTime, witness cells, the cycle's
+ * Rabin signature, and the ATTEST/ENDORSE keys and payout (CycleKeys).
+ * Output: the plan, the transaction and the next instance.
  */
 export async function cycle(
     m: K17Machine,
     value: bigint,
     lockTime: bigint,
     witness: bigint[] = [],
-    sig: RabinSig = NO_SIG
+    sig: RabinSig = NO_SIG,
+    keys: CycleKeys = {}
 ): Promise<CycleResult> {
-    const plan = planCycle(m, value, lockTime, keeper, witness, sig)
+    const plan = planCycle(m, value, lockTime, keeper, witness, sig, keys)
     const opts = bindCycleBuilder(m, plan, keeper, lockTime)
     const { tx, atInputIndex } = await m.methods.step(
         addrOf(keeper),

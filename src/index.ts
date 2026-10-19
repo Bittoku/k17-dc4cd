@@ -6,3 +6,4 @@
 export * from './forth/compiler'
 export * from './programs/relay'
 export * from './programs/fuzzy'
+export * from './programs/consortium'

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Entry point of the k17forth tool: dispatches to the `compile`, `run`,
- * `repl`, `inspect`, `deploy` and `keeper` sub-commands. `main` takes the arguments and an output sink so
+ * `repl`, `inspect`, `deploy`, `keeper` and `gateway` sub-commands. `main` takes the arguments and an output sink so
  * tests can call it without a process.
  */
 
@@ -11,6 +11,7 @@ import { startRepl } from './repl'
 import { inspectCommand } from './inspect'
 import { deployCommand } from './deploy'
 import { keeperCommand } from './keeper'
+import { gatewayCommand } from './gateway'
 
 /** Where a command writes its text. */
 export interface CliIo {
@@ -40,13 +41,16 @@ commands:
          [--roster <keys>] [--initial-mem <hexfile> | --sponsor <key>]
                                           deploy a machine, save its outpoint in the config
   keeper --config <gw.toml> [--interval <seconds>]
-                                          advance the machine in the config, one cycle per tick`
+                                          advance the machine in the config, one cycle per tick
+  gateway init --config <gw.toml>         make the attester key, print what the sponsor needs
+  gateway run --config <gw.toml> [--interval <seconds>]
+                                          sign bridge readings and relay them to the machine`
 
 /**
  * Run the tool.
  * Input: arguments (without node and script name) and an output sink.
- * Output: exit code, or a promise of it for `inspect`, `deploy` and
- * `keeper`, which use the chain.
+ * Output: exit code, or a promise of it for `inspect`, `deploy`,
+ * `keeper` and `gateway`, which use the chain.
  * The repl is asynchronous, so for `repl` this returns 0 when the session has
  * started and the process stays open until it ends.
  */
@@ -68,6 +72,8 @@ export function main(
             return deployCommand(rest, io)
         case 'keeper':
             return keeperCommand(rest, io)
+        case 'gateway':
+            return gatewayCommand(rest, io)
         default:
             io.err(USAGE)
             return 2

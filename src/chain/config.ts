@@ -8,7 +8,8 @@
  * `describeConfig` shows a configuration with the secrets hidden. No error
  * message or description ever contains a secret value. `saveMachine`
  * writes a new `[machine]` outpoint and instance id into the file in place,
- * atomically, and keeps the file mode.
+ * atomically, and keeps the file mode; `saveAttesterKey` writes a new
+ * `[attester]` key the same way with mode 600. Both use `writeTableEntries`.
  */
 
 import {
@@ -24,6 +25,29 @@ import * as TOML from '@iarna/toml'
 
 /** Networks the tools can talk to. */
 export type NetworkName = 'testnet' | 'mainnet'
+
+/**
+ * Public settings of a consortium machine (`[consortium]`), which the
+ * sponsor publishes with the outpoint. The gateway derives the current
+ * round from them: round r runs from start + r * period up to (not
+ * including) start + (r + 1) * period.
+ */
+export interface ConsortiumSettings {
+    /** Unix time (s) at which round 0 is due to open. */
+    start: number
+    /** Length of a round in seconds, at least 1. */
+    period: number
+    /** Per-deployment constant mixed into every tag, 0..65535. */
+    epoch: number
+    /** Number of landowner slots, 1..7. */
+    slots: number
+    /** Number of rounds, at least 1. */
+    rounds: number
+    /** Lowest accepted reading (`range_min`), when the program checks a range. */
+    rangeMin?: number
+    /** Highest accepted reading (`range_max`), when the program checks a range. */
+    rangeMax?: number
+}
 
 /** The validated configuration. Optional parts are undefined when not set. */
 export interface GatewayConfig {
@@ -46,6 +70,8 @@ export interface GatewayConfig {
     slot?: number
     /** Sign a reading even when the gateway thinks it is out of range. */
     signAnyway: boolean
+    /** Settings of the consortium machine (`[consortium]`). */
+    consortium?: ConsortiumSettings
 }
 
 /**
@@ -75,6 +101,67 @@ function optionalString(
     if (typeof value !== 'string')
         throw new Error(`config: [${section}] ${key} must be a string`)
     return value
+}
+
+/**
+ * Read an optional whole number.
+ * Input: section name, a table, a key and the lowest allowed value.
+ * Output: the number, or undefined. Throws (naming the key) when the value
+ * is not a whole number at or above `min`.
+ */
+function optionalInteger(
+    section: string,
+    t: TOML.JsonMap,
+    key: string,
+    min: number
+): number | undefined {
+    const value = t[key]
+    if (value === undefined) return undefined
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < min)
+        throw new Error(
+            `config: [${section}] ${key} must be a whole number, ${min} or more`
+        )
+    return value
+}
+
+/**
+ * Read the `[consortium]` table.
+ * Input: the parsed document. Output: the settings, or undefined when the
+ * table is not there. Throws when the table is there but `start`, `period`,
+ * `epoch`, `slots` or `rounds` is missing or not a whole number, or when
+ * only one of `range_min` and `range_max` is set.
+ */
+function consortiumSettings(doc: TOML.JsonMap): ConsortiumSettings | undefined {
+    if (doc.consortium === undefined) return undefined
+    const t = table(doc, 'consortium')
+    const required = (key: string, min: number): number => {
+        const value = optionalInteger('consortium', t, key, min)
+        if (value === undefined)
+            throw new Error(`config: [consortium] ${key} is required`)
+        return value
+    }
+    const settings: ConsortiumSettings = {
+        start: required('start', 0),
+        period: required('period', 1),
+        epoch: required('epoch', 0),
+        slots: required('slots', 1),
+        rounds: required('rounds', 1),
+    }
+    const rangeMin = optionalInteger('consortium', t, 'range_min', 0)
+    const rangeMax = optionalInteger('consortium', t, 'range_max', 0)
+    if ((rangeMin === undefined) !== (rangeMax === undefined))
+        throw new Error(
+            'config: [consortium] range_min and range_max go together'
+        )
+    if (rangeMin !== undefined && rangeMax !== undefined) {
+        if (rangeMax < rangeMin)
+            throw new Error(
+                'config: [consortium] range_max must not be below range_min'
+            )
+        settings.rangeMin = rangeMin
+        settings.rangeMax = rangeMax
+    }
+    return settings
 }
 
 /**
@@ -134,6 +221,7 @@ export function loadConfig(path: string): GatewayConfig {
         instanceId: optionalString('machine', machine, 'instance_id'),
         slot: slot as number | undefined,
         signAnyway: signAnyway === true,
+        consortium: consortiumSettings(doc),
     }
 }
 
@@ -154,6 +242,11 @@ export function describeConfig(cfg: GatewayConfig): string {
         `machine=${cfg.machineOutpoint ?? 'not set'}`,
         `slot=${cfg.slot ?? 'not set'}`,
         `sign_anyway=${cfg.signAnyway}`,
+        `consortium=${
+            cfg.consortium
+                ? `start:${cfg.consortium.start},period:${cfg.consortium.period},rounds:${cfg.consortium.rounds}`
+                : 'not set'
+        }`,
     ].join(' ')
 }
 
@@ -161,56 +254,77 @@ export function describeConfig(cfg: GatewayConfig): string {
 const TABLE_HEADER = /^\s*\[/
 
 /**
- * Set `[machine] outpoint` and `instance_id` in the text of a config file.
- * Input: the file text, the outpoint (`txid:vout`) and the instance id.
- * Output: the new text. Other lines, comments included, do not change; old
- * `outpoint` and `instance_id` lines of the `[machine]` table are replaced;
- * the table is added at the end when it is not there.
+ * Set entries of one table in the text of a config file.
+ * Input: the file text, the table name (for example "machine") and the
+ * entries as [key, string value] pairs. Output: the new text. Other lines,
+ * comments included, do not change; old lines of the table with the same
+ * keys are replaced; the table is added at the end when it is not there.
  */
-export function withMachine(
+export function withTableEntries(
     text: string,
-    outpoint: string,
-    instanceId: string
+    tableName: string,
+    entries: [string, string][]
 ): string {
-    const entries = [
-        `outpoint = ${JSON.stringify(outpoint)}`,
-        `instance_id = ${JSON.stringify(instanceId)}`,
-    ]
     const lines = text.split('\n')
-    const header = lines.findIndex((l) => /^\s*\[machine\]\s*(#.*)?$/.test(l))
+    const entryLines = entries.map(([k, v]) => `${k} = ${JSON.stringify(v)}`)
+    const headerPattern = new RegExp(`^\\s*\\[${tableName}\\]\\s*(#.*)?$`)
+    const header = lines.findIndex((l) => headerPattern.test(l))
     if (header < 0) {
         const body =
             text.length === 0 || text.endsWith('\n') ? text : text + '\n'
-        return `${body}\n[machine]\n${entries.join('\n')}\n`
+        return `${body}\n[${tableName}]\n${entryLines.join('\n')}\n`
     }
     let end = lines.findIndex((l, i) => i > header && TABLE_HEADER.test(l))
     if (end < 0) end = lines.length
-    const kept = lines
-        .slice(header + 1, end)
-        .filter((l) => !/^\s*(outpoint|instance_id)\s*=/.test(l))
+    const keys = new Set(entries.map(([k]) => k))
+    const kept = lines.slice(header + 1, end).filter((l) => {
+        const key = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(l)?.[1]
+        return !key || !keys.has(key)
+    })
     return [
         ...lines.slice(0, header + 1),
-        ...entries,
+        ...entryLines,
         ...kept,
         ...lines.slice(end),
     ].join('\n')
 }
 
 /**
- * Write the machine outpoint and instance id into a config file.
- * Input: the file path, the outpoint and the instance id.
- * Output: none. The new text goes to a temporary file in the same folder
- * with the old file mode (600 for a valid config), which then replaces the
- * file by rename, so a crash never leaves half a file. Throws (with no
- * secret in the message) when the new text is not valid TOML.
+ * Set `[machine] outpoint` and `instance_id` in the text of a config file.
+ * Input: the file text, the outpoint (`txid:vout`) and the instance id.
+ * Output: the new text, as `withTableEntries` makes it.
  */
-export function saveMachine(
-    path: string,
+export function withMachine(
+    text: string,
     outpoint: string,
     instanceId: string
+): string {
+    return withTableEntries(text, 'machine', [
+        ['outpoint', outpoint],
+        ['instance_id', instanceId],
+    ])
+}
+
+/**
+ * Write new entries of one table into a config file, atomically.
+ * Input: the file path, the table name, the entries, and the file mode of
+ * the result (default: the mode the file has now).
+ * Output: none. The new text goes to a temporary file in the same folder
+ * (made with mode 600), which gets the mode and then replaces the file by
+ * rename, so a crash never leaves half a file. Throws (with no secret in
+ * the message) when the new text is not valid TOML.
+ */
+export function writeTableEntries(
+    path: string,
+    tableName: string,
+    entries: [string, string][],
+    mode: number = statSync(path).mode & 0o777
 ): void {
-    const mode = statSync(path).mode & 0o777
-    const text = withMachine(readFileSync(path, 'utf8'), outpoint, instanceId)
+    const text = withTableEntries(
+        readFileSync(path, 'utf8'),
+        tableName,
+        entries
+    )
     try {
         TOML.parse(text)
     } catch {
@@ -231,6 +345,40 @@ export function saveMachine(
         }
         throw e
     }
+}
+
+/**
+ * Write the machine outpoint and instance id into a config file.
+ * Input: the file path, the outpoint and the instance id.
+ * Output: none. Atomic, keeps the file mode (see `writeTableEntries`).
+ */
+export function saveMachine(
+    path: string,
+    outpoint: string,
+    instanceId: string
+): void {
+    writeTableEntries(path, 'machine', [
+        ['outpoint', outpoint],
+        ['instance_id', instanceId],
+    ])
+}
+
+/**
+ * Write a Rabin attester key into a config file as `[attester] rabin_p`
+ * and `rabin_q` (decimal strings).
+ * Input: the file path and the two primes. Output: none. Atomic; the file
+ * gets mode 600 (see `writeTableEntries`). No error text holds a prime.
+ */
+export function saveAttesterKey(path: string, p: bigint, q: bigint): void {
+    writeTableEntries(
+        path,
+        'attester',
+        [
+            ['rabin_p', p.toString()],
+            ['rabin_q', q.toString()],
+        ],
+        0o600
+    )
 }
 
 /**

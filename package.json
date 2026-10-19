@@ -21,7 +21,8 @@
     "dotenv": "^16.6.1",
     "k17-vm": "file:../k17-vm",
     "scrypt-ts": "1.4.5",
-    "scrypt-ts-lib": "^0.1.28"
+    "scrypt-ts-lib": "^0.1.28",
+    "serialport": "^12.0.0"
   },
   "devDependencies": {
     "@types/chai": "^4.3.4",

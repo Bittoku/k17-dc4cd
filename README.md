@@ -19,6 +19,8 @@ trail — at the price of block latency and transaction fees.
 | `src/programs/relay.ts` | DC4CD §5.1: roster-attested aggregation relay. Each hop's reading must be Rabin-signed by that hop's roster member; any keeper may relay it and is paid a bounty. Output log at HALT: `[hops, sum, average, min, max]`. |
 | `src/programs/fuzzy.ts` | DC4CD §5.2: distributed fuzzy fire detection as a demo. Attested packed opinions, fuzzy AND/OR with `min`/`max`, threshold, alarm bounty. |
 | `examples/*.fs` | The generated Forth source of both programs, for `npm run forth`. |
+| `src/gateway/` | The gateway (`k17forth gateway init` / `run`): reads `R <reading>` lines from a bridge mote, signs each reading for its consortium slot and round, and relays it through the keeper. It refuses a closed round, a slot that is not enrolled, and a reading out of range. |
+| `docs/bridge-mote.fs` | DC4CD words for the bridge mote (`>gateway`, `report`) and the `tell:` line that makes nodes report one time in each period. |
 | `docs/inter-machine-tell.md` | Design note for two machines messaging in one transaction (DC4CD's nested `tell:`). Parked: blocked on interpreter size. |
 | `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the K17 defensive publication is public. |
 | `tests/` | Reference-VM and on-chain tests. Every on-chain cycle is verified with the bundled Bitcoin script interpreter. |

@@ -9,6 +9,7 @@ import {
     K17Machine,
     CycleKeys,
     CyclePlan,
+    CycleTree,
     NO_SIG,
     Roster,
     addrOf,
@@ -71,7 +72,10 @@ export interface CycleResult {
  * Run one cycle at `lockTime`, verify the unlocking script with the
  * interpreter, and return the next instance (undefined once halted).
  * Input: instance, its UTXO value, nLockTime, witness cells, the cycle's
- * Rabin signature, and the ATTEST/ENDORSE keys and payout (CycleKeys).
+ * Rabin signature, the ATTEST/ENDORSE keys and payout (CycleKeys), and the
+ * cycle's roster-tree proof (CycleTree, only for cycles that run MEMBER).
+ * The plan's leafPre, proof and leafIndex go to `step` as its last three
+ * arguments ('', '' and 0n when the cycle has no tree proof).
  * Output: the plan, the transaction and the next instance.
  */
 export async function cycle(
@@ -80,9 +84,10 @@ export async function cycle(
     lockTime: bigint,
     witness: bigint[] = [],
     sig: RabinSig = NO_SIG,
-    keys: CycleKeys = {}
+    keys: CycleKeys = {},
+    tree?: CycleTree
 ): Promise<CycleResult> {
-    const plan = planCycle(m, value, lockTime, keeper, witness, sig, keys)
+    const plan = planCycle(m, value, lockTime, keeper, witness, sig, keys, tree)
     const opts = bindCycleBuilder(m, plan, keeper, lockTime)
     const { tx, atInputIndex } = await m.methods.step(
         addrOf(keeper),
@@ -92,6 +97,9 @@ export async function cycle(
         toByteString(plan.keyAHex),
         toByteString(plan.keyBHex),
         toByteString(plan.payoutHex),
+        toByteString(plan.leafPre),
+        toByteString(plan.proof),
+        plan.leafIndex,
         opts
     )
     const verdict = tx.verifyInputScript(atInputIndex)

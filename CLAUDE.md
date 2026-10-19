@@ -36,4 +36,7 @@ held write-up belong here.
 - WhatsOnChain answers 429 and "Not Found" (just after a broadcast) are transient: retry them
   (`retryOn429`, `withRetry`). scrypt-ts providers leave their connection check rejection
   unhandled; the CLI turns "connect failed" into a warning.
+- `K17Machine.step` has 10 parameters (the last three are `leafPre`, `proof`, `leafIndex`), and the history
+  decoder (`decodeUnlocking` in `src/chain/history.ts`) reads 10 unlocking-script chunks. Pass all three
+  from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`.
 - Testnet only for live runs. Secrets (WIF, Rabin primes) never go into logs, docs or notes.

@@ -65,9 +65,11 @@ function cycleLine(cycle: DecodedCycle): string {
         }`
     const payout = cycle.payout
         ? ` payout ${cycle.payout.satoshis} to ${cycle.payout.addressHex}` +
-          (cycle.payout.slot !== undefined
-              ? ` (slot ${cycle.payout.slot})`
-              : '')
+          (cycle.payout.slot === undefined
+              ? ''
+              : cycle.payout.slot === -1
+              ? ' (tree member)'
+              : ` (slot ${cycle.payout.slot})`)
         : ''
     const after = cycle.state ? `pc ${cycle.state.pc}` : 'halted'
     return `${cycle.txid} lockTime ${cycle.lockTime} reward ${cycle.reward}${payout} -> ${after}`

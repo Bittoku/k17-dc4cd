@@ -53,6 +53,8 @@ npm run forth examples/relay.fs
 | `gateway init --config <toml>`                                              | Makes the Rabin key of a landowner and prints what the sponsor needs.                                                                                         |
 | `gateway run --config <toml> [--once]`                                      | Signs the bridge readings and relays them. With `--once` it stops after one reading: exit code 0 when the machine paid it, 3 when it was refused or rejected. |
 
+History note: `inspect --history` reads 10 unlocking-script chunks, the 3 last ones are the tree proof of the v3 machine. A machine from the v2 artifact has only 7 chunks, and it no longer decodes under the v3 artifact; its cycles show as `ambiguous`.
+
 Each command that spends money refuses mainnet without `--i-know-this-spends-real-money`. No command prints the wallet key or a Rabin prime.
 
 ## Operational rules

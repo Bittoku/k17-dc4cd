@@ -433,6 +433,9 @@ export class Keeper {
                 toByteString(plan.keyAHex),
                 toByteString(plan.keyBHex),
                 toByteString(plan.payoutHex),
+                toByteString(plan.leafPre),
+                toByteString(plan.proof),
+                plan.leafIndex,
                 options
             )
             const logged = outputLog(plan.nextState).slice(

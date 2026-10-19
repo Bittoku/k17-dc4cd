@@ -12,7 +12,7 @@
 
 import { bsv } from 'scrypt-ts'
 import { RabinSig } from 'scrypt-ts-lib'
-import { K17Machine, planCycle, pubKeyFromBytes } from 'k17-vm'
+import { CycleTree, K17Machine, planCycle, pubKeyFromBytes } from 'k17-vm'
 import { decodeCells } from '../cli/scenario'
 import { DecodedInstance, DecodedMachine, decodeInstance } from './decode'
 
@@ -123,17 +123,63 @@ interface Replay {
     payout?: PayoutOutput
 }
 
+/** The arguments of `step` that an unlocking script carries. */
+export interface UnlockingArguments {
+    keeperHex: string
+    witnessHex: string
+    sig: RabinSig
+    keyAHex: string
+    keyBHex: string
+    payoutHex: string
+    /** The roster-tree proof (chunks 7 to 9); undefined for a 7-chunk (v2) script. */
+    tree?: CycleTree
+}
+
+/**
+ * Decode the unlocking script of input 0 of a cycle transaction.
+ * The chunks are the arguments of `step` in order: keeper address, witness,
+ * sigS, sigPad, keyA, keyB, payout, leafPre, proof, leafIndex. A script with
+ * only 7 chunks comes from a v2 machine: it has no tree arguments, so `tree`
+ * is undefined.
+ * Input: the script chunks. Output: the arguments, or null when there are
+ * fewer than 7 chunks or the keeper address is not 20 bytes.
+ */
+export function decodeUnlocking(
+    chunks: ScriptChunk[]
+): UnlockingArguments | null {
+    if (chunks.length < 7) return null
+    const keeperHex = chunkHex(chunks[0])
+    if (keeperHex.length !== 40) return null
+    const tree: CycleTree | undefined =
+        chunks.length >= 10
+            ? {
+                  leafPre: chunkHex(chunks[7]),
+                  proof: chunkHex(chunks[8]),
+                  leafIndex: chunkNumber(chunks[9]),
+              }
+            : undefined
+    return {
+        keeperHex,
+        witnessHex: chunkHex(chunks[1]),
+        sig: { s: chunkNumber(chunks[2]), padding: chunkHex(chunks[3]) },
+        keyAHex: chunkHex(chunks[4]),
+        keyBHex: chunkHex(chunks[5]),
+        payoutHex: chunkHex(chunks[6]),
+        tree,
+    }
+}
+
 /**
  * Replay a cycle with the reference code to find the keeper reward and the
  * payout, then check them against the real outputs.
- * The unlocking script of input 0 starts with the arguments of `step` in
- * order: keeper address, witness, sigS, sigPad, keyA, keyB, payout. Output 0
- * is the state (or the refund), then the reward when above 0, then the PAYSLOT
- * payout when the cycle made one.
+ * The unlocking script of input 0 is read by `decodeUnlocking`. Output 0
+ * is the state (or the refund), then the reward when above 0, then the
+ * PAYSLOT or PAYLEAF payout when the cycle made one.
  * Input: the cycle transaction, the decoded machine that it spent, and the
  * value of that machine output.
  * Output: the reward and payout, or null when the unlocking script cannot be
- * read, the replay throws, or its amounts differ from the outputs.
+ * read, the replay throws (a tree cycle without tree chunks included), or its
+ * amounts differ from the outputs.
  */
 function replayCycle(
     tx: bsv.Transaction,
@@ -141,29 +187,25 @@ function replayCycle(
     previousValue: number
 ): Replay | null {
     try {
-        const chunks = tx.inputs[0].script.chunks
-        if (chunks.length < 7 || !previous.instance) return null
-        const keeperHex = chunkHex(chunks[0])
-        if (keeperHex.length !== 40) return null
-        const keyA = chunkHex(chunks[4])
-        const keyB = chunkHex(chunks[5])
-        const payoutHex = chunkHex(chunks[6])
-        const sig: RabinSig = {
-            s: chunkNumber(chunks[2]),
-            padding: chunkHex(chunks[3]),
-        }
+        const args = decodeUnlocking(tx.inputs[0].script.chunks)
+        if (!args || !previous.instance) return null
         const plan = planCycle(
             previous.instance as K17Machine,
             BigInt(previousValue),
             BigInt(tx.nLockTime),
-            bsv.Address.fromPublicKeyHash(Buffer.from(keeperHex, 'hex')),
-            decodeCells(chunkHex(chunks[1])),
-            sig,
+            bsv.Address.fromPublicKeyHash(Buffer.from(args.keeperHex, 'hex')),
+            decodeCells(args.witnessHex),
+            args.sig,
             {
-                attestKey: keyA ? pubKeyFromBytes(keyA) : undefined,
-                endorseKey: keyB ? pubKeyFromBytes(keyB) : undefined,
-                payoutHex: payoutHex || undefined,
-            }
+                attestKey: args.keyAHex
+                    ? pubKeyFromBytes(args.keyAHex)
+                    : undefined,
+                endorseKey: args.keyBHex
+                    ? pubKeyFromBytes(args.keyBHex)
+                    : undefined,
+                payoutHex: args.payoutHex || undefined,
+            },
+            args.tree
         )
         const expected: number[] = []
         if (plan.reward > 0n) expected.push(Number(plan.reward))

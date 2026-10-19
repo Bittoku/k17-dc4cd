@@ -14,3 +14,4 @@ tsconfig-scryptTS.json
 # gateway and sponsor configs hold the wallet key and Rabin primes
 *.toml
 gateways/
+.superpowers/

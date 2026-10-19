@@ -17,12 +17,15 @@ import {
     withSlot,
     heartbeatProgram,
     payoutOf,
+    Op,
+    SparseMerkleTree,
+    encodeLeafPre,
 } from 'k17-vm'
 import { compileToHex, relayProgram } from '../src'
 import { FUNDING, T0, cycle, keeper } from './utils/chain'
 import { getDefaultSigner } from './utils/txHelper'
 import { decodeMachine } from '../src/chain/decode'
-import { walkHistory, TxSource } from '../src/chain/history'
+import { walkHistory, decodeUnlocking, TxSource } from '../src/chain/history'
 import { loadConfig, describeConfig } from '../src/chain/config'
 import { addressBalance, chainInfo } from '../src/chain/provider'
 import { inspectCommand } from '../src/cli/inspect'
@@ -313,6 +316,77 @@ describe('chain layer', function () {
             expect(cycles[0].halted).to.equal(true)
             expect(cycles[0].state).to.equal(null)
             expect(cycles[0].ambiguous).to.equal(true)
+        })
+    })
+
+    describe('v3 tree cycle', () => {
+        /**
+         * Deploy a v3 machine whose roster tree holds one member, run a
+         * `MEMBER DROP YIELD HALT` cycle with that member's proof, and check
+         * that the history decoder reads the three tree chunks and replays the
+         * cycle (not `ambiguous`).
+         */
+        it('decodes the tree chunks of a MEMBER cycle and replays it', async () => {
+            const memberKeyHash = '5a'.repeat(32)
+            const memberLeaf = encodeLeafPre(
+                memberKeyHash,
+                payoutOf(keeperAddress),
+                0n
+            )
+            const tree = new SparseMerkleTree()
+            tree.set(5, memberLeaf)
+            const proofForMember = tree.proof(5)
+            const prog = [Op.MEMBER, Op.DROP, Op.YIELD, Op.HALT]
+                .map((op) => op.toString(16).padStart(2, '0'))
+                .join('')
+            const m = newMachine(
+                prog,
+                ECON,
+                T0,
+                undefined,
+                undefined,
+                undefined,
+                {
+                    rosterRoot: tree.root(),
+                    sponsorKeyHash: '77'.repeat(32),
+                }
+            )
+            await m.connect(getDefaultSigner())
+            const deployTx = await m.deploy(FUNDING)
+            const run = await cycle(
+                m,
+                BigInt(FUNDING),
+                T0 + 100n,
+                [],
+                undefined,
+                {},
+                proofForMember
+            )
+            expect(run.plan.treeOp).to.equal('member')
+            const args = decodeUnlocking(run.tx.inputs[0].script.chunks)
+            expect(args?.tree).to.deep.equal({
+                leafPre: memberLeaf,
+                proof: proofForMember.proof,
+                leafIndex: 5n,
+            })
+            const chain = new MemoryChain()
+            chain.stubUnknown = true
+            chain.add(deployTx)
+            chain.add(run.tx)
+            const cycles = await walkHistory(chain, `${run.tx.id}:0`)
+            expect(cycles).to.have.length(1)
+            expect(cycles[0].ambiguous).to.equal(false)
+            expect(cycles[0].reward).to.equal(Number(run.plan.reward))
+        })
+
+        it('reads a 7-chunk (v2) unlocking script as having no tree', () => {
+            // push of a 20-byte keeper address, then six OP_0 pushes
+            const script = bsv.Script.fromHex(
+                '14' + 'cd'.repeat(20) + '00'.repeat(6)
+            )
+            const args = decodeUnlocking(script.chunks)
+            expect(args).to.not.equal(null)
+            expect(args?.tree).to.equal(undefined)
         })
     })
 

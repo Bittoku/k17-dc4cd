@@ -441,7 +441,7 @@ export class Keeper {
             if (/needs a witness/.test(message))
                 return { result: { mtp, skipped: 'needs witness' } }
             // The chain clock has not advanced MIN_STEP past lastTime yet.
-            if (/MIN_STEP/.test(message))
+            if (/\(MIN_STEP\)/.test(message))
                 return { result: { mtp, skipped: WAITING_FOR_MTP } }
             return { result: { mtp, error: `plan: ${message}` } }
         }

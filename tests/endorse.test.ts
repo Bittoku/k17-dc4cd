@@ -25,6 +25,7 @@ import {
     OPTS,
     PAYOUT_ADDRESS,
     WALLET_KEY,
+    ChainTip,
     chainClock,
     consortiumOnChain,
     expectNoSecret,
@@ -35,6 +36,7 @@ import {
     stranger,
     tickUntil,
 } from './utils/consortiumChain'
+import { T0 } from './utils/chain'
 
 const dir = mkdtempSync(join(tmpdir(), 'k17endorse-'))
 
@@ -141,6 +143,43 @@ describe('k17forth endorse', function () {
         expect(line).to.not.contain('refused')
         await tickUntil(gateway, /delivered 1 earned 150 sats/)
         expect(chain.verifyMachineSpends()).to.be.greaterThan(3)
+    })
+
+    it('needs two runs: the lead cycle, then the endorsement one block later', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(false)
+        const config = sponsorConfig('sponsor-two-runs.toml', cfg)
+        // A fixed tip and a plain clock far ahead: the lock time is MTP - 1.
+        const tip: ChainTip = { mtp: Number(T0) + 500 }
+        const run = async (): Promise<{ code: number; lines: string[] }> => {
+            const { lines, io } = sink()
+            const code = await endorseCommand(endorseArgs(config), io, {
+                provider: chain,
+                signer,
+                keeper: keeperOptions(chain, tip),
+                now: () => Number(T0) + 100_000,
+            })
+            return { code, lines }
+        }
+        const first = await run()
+        expect(first.code).to.equal(1)
+        const text = first.lines.join('\n')
+        expect(text).to.contain('cycle before the endorsement')
+        expect(text).to.contain('skipped: waiting for MTP')
+        expect(text).to.contain(
+            'the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.'
+        )
+        expect(first.lines.some((l) => /^endorsed slot/.test(l))).to.equal(
+            false
+        )
+        // The next block: MTP moves 61 s.
+        tip.mtp += 61
+        const second = await run()
+        expect(second.lines.join('\n')).to.not.contain('ERR')
+        expect(second.code).to.equal(0)
+        expect(second.lines.some((l) => /^endorsed slot 1 /.test(l))).to.equal(
+            true
+        )
+        expectNoSponsorSecret([...first.lines, ...second.lines])
     })
 
     it('refuses a key that is not roster slot 0, before any broadcast', async () => {

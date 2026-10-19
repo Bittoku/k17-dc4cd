@@ -162,10 +162,10 @@ k17forth endorse --config sponsor.toml --member <public key of landowner 1> \
   --payout <payout address of landowner 1> --slot 1
 ```
 
-The command checks that the sponsor key is in roster slot 0 of the machine. It signs the endorsement and relays it in one cycle. On the first endorsement it runs the first cycle of the program before the endorsement. It prints the txid and the slot:
+The command checks that the sponsor key is in roster slot 0 of the machine. It signs the endorsement and relays it in one cycle. Since v3.1 every cycle that keeps the machine alive needs a new block: the lock time is MTP - 1, and a cycle must be at least 60 seconds after the one before (on mainnet, about 10 minutes). So the first endorsement takes two runs. The first run makes the first cycle of the program, prints "waiting for MTP" and exits with code 1. Run the same command again after the next block. The second run prints the txid and the slot. Each later slot needs its own block, so enrol one landowner for each block:
 
 ```
-endorsed slot 1 txid 9be22d15495cc21f4986629477bb69aa9b5c8ac3d115f9f99c68eccc16accd3b lockTime 1792391346 (mtp 1792391347) -> 9be22d15...:0
+endorsed slot 1 txid 9be22d15495cc21f4986629477bb69aa9b5c8ac3d115f9f99c68eccc16accd3b lockTime 1792391946 (mtp 1792391947) -> 9be22d15...:0
 ```
 
 The machine enrols slots in order: 1, then 2, then 3. It refuses an endorsement after `enrolDeadline`. Enrol all landowners before that time.
@@ -256,12 +256,17 @@ instance f8a87a7e6e631b314dff252b18dda0039cfbc83fbd15e2abdb481d70d4eeaaa5
 lastTime 1792391346 (median time past 1792391347)
 ```
 
-The endorsements (the first one also ran the first cycle of the program):
+The endorsements. This transcript is from before v3.1, when all cycles of one MTP could share a lock time. It is not valid for v3.1. Under v3.1 (illustrative sequence, not real output) each run needs its own block:
 
 ```
-cycle before the endorsement: cycle 4572d25f24b73e45cecc279b03bfdb202dca85192f3509f1779d4351b1fea9f3 lockTime 1792391346 (mtp 1792391347) reward 100
-endorsed slot 2 txid c7a4616de5201977798d4e694d8bf4655458b032f2c14ce9ef9e8b70c2a6b979 lockTime 1792391346 (mtp 1792391347)
-endorsed slot 3 txid ecd103145a9006203d680e2b594e5f108bd705e4c6266a7233a4d166eabdeb29 lockTime 1792391346 (mtp 1792391347)
+$ k17forth endorse ... --slot 1          # run 1: the first cycle of the program
+cycle before the endorsement: cycle 4572d25f... lockTime 1792391346 (mtp 1792391347) reward 100
+endorse: skipped: waiting for MTP
+endorse: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+$ k17forth endorse ... --slot 1          # run 2, after the next block
+endorsed slot 1 txid 9be22d15... lockTime 1792391946 (mtp 1792391947) -> 9be22d15...:0
+$ k17forth endorse ... --slot 2          # after the next block
+endorsed slot 2 txid c7a4616d... lockTime 1792392546 (mtp 1792392547) -> c7a4616d...:0
 ```
 
 Cycle `9be22d15...` endorsed slot 1. Its command stopped with "Not Found" after the broadcast, because WhatsOnChain did not yet have the new transaction. The tools now read the new cycle from the keeper and retry this error.

@@ -52,6 +52,13 @@ export interface GatewayOptions {
     intervalMs?: number
     /** Where status lines go. Default: standard output. */
     out?: (line: string) => void
+    /**
+     * Relay one reading and stop: after the first reading, tick on the
+     * interval until it is delivered, dropped or refused (or the machine
+     * halts); after a delivery run one more tick, the pay cycle; then end
+     * `run`. Default: false (run until the bridge ends).
+     */
+    once?: boolean
 }
 
 /** A signed reading that waits for an attest cycle. */
@@ -119,6 +126,7 @@ export class Gateway {
     private readonly intervalMs: number
     private readonly out: (line: string) => void
     private readonly cfg: GatewayConfig
+    private readonly once: boolean
     private pending?: Pending
     private readonly deliveredRounds = new Set<number>()
     private halted = false
@@ -150,6 +158,7 @@ export class Gateway {
         this.source = new CachedSource(provider)
         this.now = options.now ?? (() => Math.floor(Date.now() / 1000))
         this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
+        this.once = options.once ?? false
         this.out = options.out ?? ((line) => console.log(line))
         this.bridge =
             options.bridge ??
@@ -172,7 +181,8 @@ export class Gateway {
     }
 
     /**
-     * Take one reading: check, sign, and tick with it.
+     * Take one reading: follow the machine to its newest output
+     * (`Keeper.sync`), check, sign, and tick with it.
      * Input: the reading. Output: the status line. When the slot is not
      * enrolled, no round is open at the chain time, the reading is out of
      * range, or the slot already delivered in this round, the line says why
@@ -187,11 +197,28 @@ export class Gateway {
             return this.status(UNKNOWN, `reading ${reading}: ${messageOf(e)}`)
         }
         let round: number | null = this.attester.roundAt(chain.time)
+        // Other processes move the machine on (the sponsor's endorsements,
+        // other gateways): check the enrolment on the newest machine.
+        let syncNote = ''
+        try {
+            await this.keeper.sync()
+        } catch (e) {
+            syncNote = ` (sync failed, used the last known machine: ${messageOf(
+                e
+            )})`
+        }
+        if (!this.keeper.outpoint) {
+            this.halted = true
+            return this.status(null, 'machine halted')
+        }
         let machine: DecodedMachine | null
         try {
             machine = await this.currentMachine()
         } catch (e) {
-            return this.status(round, `error: load machine: ${messageOf(e)}`)
+            return this.status(
+                round,
+                `error: load machine: ${messageOf(e)}${syncNote}`
+            )
         }
         if (machine) {
             try {
@@ -199,18 +226,18 @@ export class Gateway {
                 if (round !== null && this.deliveredRounds.has(round))
                     return this.status(
                         round,
-                        `reading ${reading} refused: slot already delivered in round ${round}`
+                        `reading ${reading} refused: slot already delivered in round ${round}${syncNote}`
                     )
                 const input = this.attester.sign(reading, round)
                 this.pending = { input, round: round as number, reading }
             } catch (e) {
                 return this.status(
                     round,
-                    `reading ${reading} refused: ${messageOf(e)}`
+                    `reading ${reading} refused: ${messageOf(e)}${syncNote}`
                 )
             }
         }
-        return this.tick(chain)
+        return (await this.tick(chain)) + syncNote
     }
 
     /**
@@ -230,7 +257,8 @@ export class Gateway {
 
     /**
      * Run until the bridge ends or the machine halts: one tick per reading
-     * and one tick per interval. Each status line goes to `out`.
+     * and one tick per interval. With `once`, stop after the first reading
+     * is delivered and paid, dropped or refused. Each status line goes to `out`.
      * Output: 0 when the bridge ended or the machine halted; BRIDGE_FAILED
      * when the bridge failed (the error goes to `out`, with the secrets
      * hidden). Never throws for chain errors (they are status lines).
@@ -260,6 +288,21 @@ export class Gateway {
                 if (step.done) break
                 const reading = step.value
                 await this.enqueue(() => this.handleReading(reading), stop)
+                if (this.once) {
+                    const deliveredBefore = this.deliveredRounds.size
+                    // The interval timer ticks until the reading is settled.
+                    while (this.pending && !this.halted) {
+                        await new Promise((r) => setTimeout(r, this.intervalMs))
+                        await this.queue
+                    }
+                    // The cycle after the attest cycle pays the slot.
+                    if (
+                        this.deliveredRounds.size > deliveredBefore &&
+                        !this.halted
+                    )
+                        await this.enqueue(() => this.tickIdle(), stop)
+                    break
+                }
             }
         } catch (e) {
             next = undefined

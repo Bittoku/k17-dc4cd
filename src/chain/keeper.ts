@@ -325,6 +325,25 @@ export class Keeper {
     }
 
     /**
+     * Follow the machine forward to its unspent output, so that the next
+     * tick (and a reader of `outpoint`) sees the newest machine. Other
+     * processes (a sponsor's endorsement, other gateways) move the machine
+     * on, so the configured outpoint can be old.
+     * Output: the outpoint the next tick spends, or undefined when the
+     * machine halted. Throws when the spends lookup or a transaction read
+     * fails; the keeper state is then unchanged.
+     */
+    async sync(): Promise<string | undefined> {
+        if (this.halted) return undefined
+        const found = await this.resync(await this.load())
+        if (found === 'halted') {
+            this.halted = true
+            this.current = undefined
+        }
+        return this.outpoint
+    }
+
+    /**
      * The machine output to spend: the cached one, else the configured one.
      * Output: its transaction and output index. Throws when it cannot be read.
      */

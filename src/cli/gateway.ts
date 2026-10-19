@@ -9,9 +9,11 @@
  * wallet address). It never prints a prime, and it refuses a config that
  * already has a key.
  *
- * `gateway run --config <gw.toml> [--interval <seconds>]` runs a `Gateway`
- * on the bridge (`[bridge] serial`, else standard input) until the bridge
- * ends or the machine halts; a bridge error ends it with exit code 1. A mainnet config needs
+ * `gateway run --config <gw.toml> [--interval <seconds>] [--once]` runs a
+ * `Gateway` on the bridge (`[bridge] serial`, else standard input) until the
+ * bridge ends or the machine halts; with `--once` it stops after the first
+ * reading is delivered, dropped or refused. A bridge error ends it with
+ * exit code 1. A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
 
@@ -33,7 +35,7 @@ import type { CliIo } from './k17forth'
 
 /** Help text of the gateway sub-commands. */
 export const GATEWAY_USAGE = `usage: k17forth gateway init --config <gw.toml>
-       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--i-know-this-spends-real-money]`
+       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--i-know-this-spends-real-money]`
 
 /** Switch that allows a gateway on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -158,7 +160,11 @@ async function runGateway(
     io: CliIo,
     deps: GatewayCommandDeps
 ): Promise<number> {
-    const parsed = parseFlags(args, ['config', 'interval'], [MAINNET_SWITCH])
+    const parsed = parseFlags(
+        args,
+        ['config', 'interval'],
+        [MAINNET_SWITCH, 'once']
+    )
     if (typeof parsed === 'string') {
         io.err(parsed)
         io.err(GATEWAY_USAGE)
@@ -199,6 +205,7 @@ async function runGateway(
             now: deps.now,
             intervalMs: interval * 1000,
             out: (line) => io.out(hide(line)),
+            once: parsed.switches.has('once'),
         })
         io.out(
             `gateway: ${describeConfig(cfg)} bridge=${

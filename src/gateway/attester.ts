@@ -53,12 +53,13 @@ function prime(name: string, text: string | undefined): bigint {
 }
 
 /**
- * Consortium options that are enough to compute reading tags. The tag
- * depends on epoch, round and slot only; the other fields get values that
- * pass `readingTag`'s checks and are never used.
+ * Consortium options that are enough to compute reading and endorsement
+ * tags. A tag depends on epoch, round and slot only; the other fields get
+ * values that pass the checks of `readingTag` and `endorseTag` and are
+ * never used.
  * Input: the `[consortium]` settings. Output: the options.
  */
-function tagOptions(settings: ConsortiumSettings): ConsortiumOptions {
+export function tagOptions(settings: ConsortiumSettings): ConsortiumOptions {
     return {
         slots: settings.slots,
         rounds: settings.rounds,
@@ -70,6 +71,18 @@ function tagOptions(settings: ConsortiumSettings): ConsortiumOptions {
         floor: 2,
         sponsorKeyHashHex: '00'.repeat(32),
     }
+}
+
+/**
+ * The Rabin key of a configuration (`[attester] rabin_p`, `rabin_q`).
+ * Input: the configuration. Output: the key, with the public key p * q.
+ * Throws a message that names the missing or wrong key, never a value.
+ */
+export function rabinKeyOf(cfg: GatewayConfig): Attester {
+    const p = prime('rabin_p', cfg.rabinP)
+    const q = prime('rabin_q', cfg.rabinQ)
+    // rabinsig's privKeyToPubKey is p * q; k17-vm has no helper for it.
+    return { priv: { p, q }, pub: p * q }
 }
 
 /** Signs readings for one slot of one consortium machine. */
@@ -92,12 +105,8 @@ export class GatewayAttester {
      * Throws a plain message (no secret) when one is missing or wrong.
      */
     constructor(cfg: GatewayConfig) {
-        const p = prime('rabin_p', cfg.rabinP)
-        const q = prime('rabin_q', cfg.rabinQ)
-        // rabinsig's privKeyToPubKey is p * q; k17-vm has no helper for it.
-        const pub: RabinPubKey = p * q
-        this.attester = { priv: { p, q }, pub }
-        this.keyHashHex = keyHash(pub)
+        this.attester = rabinKeyOf(cfg)
+        this.keyHashHex = keyHash(this.attester.pub)
         if (cfg.slot === undefined)
             throw new Error('config: [gateway] slot is required')
         if (!cfg.instanceId || !/^[0-9a-fA-F]{64}$/.test(cfg.instanceId))

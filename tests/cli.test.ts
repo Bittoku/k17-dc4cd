@@ -16,7 +16,7 @@ import {
     K17Machine,
 } from 'k17-vm'
 import { compileToHex, relayProgram, relayTag, RelayOptions } from '../src'
-import { Scenario, runScenario } from '../src/cli/scenario'
+import { Scenario, formatReport, runScenario } from '../src/cli/scenario'
 import { compileCommand } from '../src/cli/compile'
 import { runCommand } from '../src/cli/run'
 import { Repl } from '../src/cli/repl'
@@ -43,7 +43,7 @@ function relayScenario(): Scenario {
         cycles: [
             { lockTime: T0 },
             ...READINGS.map((reading, k) => ({
-                lockTime: T0 + k + 1,
+                lockTime: T0 + 60 * (k + 1),
                 witness: [reading],
                 sigverify: {
                     attester: `a${k + 1}`,
@@ -51,7 +51,7 @@ function relayScenario(): Scenario {
                     value: reading,
                 },
             })),
-            { lockTime: T0 + 10 },
+            { lockTime: T0 + 600 },
         ],
     }
 }
@@ -100,7 +100,7 @@ describe('k17forth', function () {
             const manual = stepK(
                 base.state,
                 {
-                    lockTime: BigInt(T0 + 1),
+                    lockTime: BigInt(T0 + 60),
                     who: 0n,
                     witness: [2231n],
                     roster: [att.pub],
@@ -142,6 +142,53 @@ describe('k17forth', function () {
             const reports = runScenario(prog, sc)
             expect(reports[0].roster.map((r) => r.slot)).to.deep.equal([0, 1])
             expect(reports[0].roster[1].payoutHex).to.equal('11'.repeat(20))
+        })
+    })
+
+    describe('MIN_STEP warning', () => {
+        it('warns when consecutive alive cycles are less than 60 s apart', () => {
+            const prog = compileToHex('yield yield yield yield')
+            const reports = runScenario(prog, {
+                attesters: {},
+                cycles: [
+                    { lockTime: T0 },
+                    { lockTime: T0 + 30 }, // 30 s after the first: refused
+                    { lockTime: T0 + 90 }, // exactly 60 s after the second
+                    { lockTime: T0 + 100 }, // 10 s after the third: refused
+                ],
+            })
+            expect(reports.map((r) => r.warning !== undefined)).to.deep.equal([
+                false,
+                true,
+                false,
+                true,
+            ])
+            expect(reports[1].warning).to.contain('MIN_STEP')
+            expect(formatReport(reports[1]).join('\n')).to.contain(
+                'the chain would refuse this cycle: MIN_STEP'
+            )
+            expect(formatReport(reports[2]).join('\n')).to.not.contain(
+                'MIN_STEP'
+            )
+        })
+
+        it('does not warn for a cycle that halts', () => {
+            const reports = runScenario(compileToHex('yield'), {
+                attesters: {},
+                cycles: [{ lockTime: T0 }, { lockTime: T0 + 1 }],
+            })
+            expect(reports[1].status).to.equal('halted')
+            expect(reports[1].warning).to.equal(undefined)
+        })
+
+        it('the repl warns on a YIELD less than 60 s after the last one', () => {
+            const repl = new Repl()
+            repl.execute('.time 1000')
+            expect(repl.execute('yield').join('\n')).to.not.contain('MIN_STEP')
+            repl.execute('.time 1030')
+            expect(repl.execute('yield').join('\n')).to.contain('MIN_STEP')
+            repl.execute('.time 1090')
+            expect(repl.execute('yield').join('\n')).to.not.contain('MIN_STEP')
         })
     })
 

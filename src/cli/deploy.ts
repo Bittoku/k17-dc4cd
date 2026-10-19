@@ -5,14 +5,25 @@
  * deploys it with the wallet of the config file. It prints the outpoint and
  * the machine's instance id, then writes both into the config file's
  * `[machine]` table (atomic write, file mode kept). The deployment time is
- * below the chain's median time past, so the first cycle can run at once.
+ * below the chain's median time past. Since v3.1 the first cycle needs an
+ * nLockTime at least 60 s after it (MIN_STEP). The optional `--dead-man`
+ * interval makes the machine refund the beneficiary when no cycle ran for
+ * that long.
  * Mainnet needs the switch `--i-know-this-spends-real-money`.
  */
 
 import { readFileSync } from 'fs'
 import { Signer, bsv } from 'scrypt-ts'
 import { RabinPubKey } from 'scrypt-ts-lib'
-import { CELL, MEM_CELLS, addrOf, keyHash, newMachine, rosterOf } from 'k17-vm'
+import {
+    CELL,
+    DEAD_MAN_FLOOR,
+    MEM_CELLS,
+    addrOf,
+    keyHash,
+    newMachine,
+    rosterOf,
+} from 'k17-vm'
 import { ForthCompileError, compileToHex } from '../forth/compiler'
 import { sponsorMemory } from '../programs/consortium'
 import {
@@ -30,6 +41,7 @@ export const DEPLOY_USAGE = `usage: k17forth deploy <file.fs> --config <gw.toml>
          --reward-min <sats> --slope <sats/s> --reward-max <sats>
          [--beneficiary <address>] [--roster <key1,key2,...>]
          [--initial-mem <hexfile> | --sponsor <keyhash|rabin public key>]
+         [--dead-man <seconds>]
          [--network testnet|mainnet] [--i-know-this-spends-real-money]`
 
 /** Switch that allows a mainnet deployment. */
@@ -57,6 +69,22 @@ function wholeNumber(name: string, text: string): bigint {
     if (!/^\d+$/.test(text))
         throw new UsageError(`--${name} must be a whole number`)
     return BigInt(text)
+}
+
+/**
+ * Read the `--dead-man` interval.
+ * Input: the flag text, or undefined when the flag is absent. Output: the
+ * interval in seconds; 0 (the default) means off. Throws a UsageError unless
+ * the value is 0 or at least DEAD_MAN_FLOOR (6 hours).
+ */
+function deadManSeconds(text: string | undefined): bigint {
+    if (text === undefined) return 0n
+    const seconds = wholeNumber('dead-man', text)
+    if (seconds !== 0n && seconds < DEAD_MAN_FLOOR)
+        throw new UsageError(
+            `--dead-man must be 0 (off) or at least ${DEAD_MAN_FLOOR} seconds (6 hours); a shorter interval lets any keeper kill a healthy machine`
+        )
+    return seconds
 }
 
 /**
@@ -126,6 +154,7 @@ export async function deployCommand(
             'initial-mem',
             'sponsor',
             'network',
+            'dead-man',
         ],
         [MAINNET_SWITCH]
     )
@@ -160,6 +189,7 @@ export async function deployCommand(
             rewardMin: wholeNumber('reward-min', flag('reward-min') as string),
             slope: wholeNumber('slope', flag('slope') as string),
             rewardMax: wholeNumber('reward-max', flag('reward-max') as string),
+            deadMan: deadManSeconds(flag('dead-man')),
         }
         if (flag('initial-mem') && flag('sponsor'))
             throw new UsageError('use --initial-mem or --sponsor, not both')

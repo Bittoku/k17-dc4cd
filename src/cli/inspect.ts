@@ -46,10 +46,33 @@ function machineLines(machine: DecodedMachine): string[] {
     lines.push(
         `instance ${machine.instanceId}`,
         `beneficiary ${machine.beneficiary}  reward min ${machine.rewardMin} slope ${machine.slope} max ${machine.rewardMax}`,
+        `dead-man: ${deadManText(machine.deadMan)}`,
         'program:',
         ...machine.disassembly.map((l) => '  ' + l)
     )
     return lines
+}
+
+/**
+ * Text for the dead-man interval of a machine.
+ * Input: the interval in seconds (0n = off). Output: "off", or the seconds
+ * with the largest whole unit (days, hours, minutes) when it divides evenly,
+ * for example "2592000 s (30 days)".
+ */
+export function deadManText(seconds: bigint): string {
+    if (seconds === 0n) return 'off'
+    const units: [string, bigint][] = [
+        ['day', 86400n],
+        ['hour', 3600n],
+        ['minute', 60n],
+    ]
+    for (const [name, size] of units) {
+        if (seconds % size === 0n) {
+            const count = seconds / size
+            return `${seconds} s (${count} ${name}${count === 1n ? '' : 's'})`
+        }
+    }
+    return `${seconds} s`
 }
 
 /**

@@ -48,6 +48,7 @@ import {
     PAYOUT_ADDRESS,
     T0,
     WALLET_KEY,
+    chainClock,
     collect,
     consortiumOnChain,
     expectNoSecret,
@@ -235,7 +236,7 @@ describe('gateway: run loop', function () {
         const gateway = new Gateway(cfg, chain, signer, {
             bridge: openBridge(bridge),
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
             intervalMs: 20,
             out: (line) => {
                 lines.push(line)
@@ -281,7 +282,7 @@ describe('gateway: run loop', function () {
             // The bridge ends at once, as standard input does after one line.
             bridge: openBridge(Readable.from(['R 5231\n'])),
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
             intervalMs: 20,
             once: true,
             out: (line) => lines.push(line),
@@ -300,7 +301,7 @@ describe('gateway: run loop', function () {
         const gateway = new Gateway(cfg, chain, signer, {
             bridge: openBridge(Readable.from(['R 9000\n'])), // out of range
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
             intervalMs: 20,
             once: true,
             out: (line) => lines.push(line),
@@ -330,7 +331,7 @@ describe('gateway: run loop', function () {
         const before = chain.cycleBroadcasts
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         const line = await gateway.handleReading(5231)
         expect(line).to.contain('slot not enrolled')
@@ -344,7 +345,10 @@ describe('gateway: run loop', function () {
             { ...cfg, instanceId: 'c1'.repeat(32) },
             chain,
             signer,
-            { keeper: keeperOptions(chain), now: () => OPTS.start + 100 }
+            {
+                keeper: keeperOptions(chain),
+                now: chainClock(chain, OPTS.start + 100),
+            }
         )
         const line = await gateway.handleReading(5231)
         expect(line).to.contain(
@@ -358,7 +362,7 @@ describe('gateway: run loop', function () {
         const before = chain.cycleBroadcasts
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         const line = await gateway.handleReading(9000)
         expect(line).to.contain('reading out of range')
@@ -384,12 +388,18 @@ describe('gateway: chain time and pending readings', function () {
         const tip: ChainTip = { mtp: wall - 2400 }
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain, tip),
-            now: () => wall,
+            // The wall clock stays ahead of the tip, so MTP - 1 sets the lock time.
+            now: () => Math.max(wall, tip.mtp + 100),
         })
         const first = await gateway.handleReading(5231)
         expect(first).to.match(/^round 0 slot 1 /)
         expect(first).to.not.contain('refused')
-        await tickUntil(gateway, /delivered 1 earned 150 sats/)
+        // The chain time is capped by MTP - 1, so each cycle needs a block:
+        // the tip moves 61 s before each tick (MIN_STEP is 60 s).
+        const nextBlock = () => {
+            tip.mtp += 61
+        }
+        await tickUntil(gateway, /delivered 1 earned 150 sats/, 8, nextBlock)
         expect(outLogOf(chain, gateway)).to.deep.equal([5231n])
         // Every cycle so far is stamped in round 0 of the machine.
         for (const tx of chain.txs.values())
@@ -398,18 +408,18 @@ describe('gateway: chain time and pending readings', function () {
         tip.mtp = wall + 10
         const second = await gateway.handleReading(5300)
         expect(second).to.match(/^round 1 slot 1 /)
-        await tickUntil(gateway, /delivered 2 earned 300 sats/)
+        await tickUntil(gateway, /delivered 2 earned 300 sats/, 8, nextBlock)
         expect(outLogOf(chain, gateway)).to.deep.equal([5231n, 5300n])
         expect(chain.verifyMachineSpends()).to.be.greaterThan(6)
     })
 
     it('keeps a pending reading through a skipped and a failed tick, then refuses a second reading in the round', async () => {
         const { chain, signer, cfg } = await consortiumOnChain(true)
-        // Chain time T0 + 1 is before the machine's lastTime (T0 + 2): skip.
-        const tip: ChainTip = { mtp: T0 + 2 }
+        // Chain time T0 + 99 is before the machine's lastTime (T0 + 120): skip.
+        const tip: ChainTip = { mtp: T0 + 100 }
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain, tip),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         const skipped = await gateway.handleReading(5231)
         expect(skipped).to.contain('skipped: waiting')
@@ -435,7 +445,7 @@ describe('gateway: chain time and pending readings', function () {
         const tip: ChainTip = { mtp: T0 + 1_000_000, fail: 'tip unreachable' }
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain, tip),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         const before = chain.cycleBroadcasts
         const kept = await gateway.handleReading(5231)
@@ -456,7 +466,7 @@ describe('gateway: chain time and pending readings', function () {
         cfg.signAnyway = true
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         await gateway.handleReading(9000) // signed, outside the program's range
         await tickUntil(gateway, /dropped reading 9000: the machine rejects it/)

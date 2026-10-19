@@ -28,7 +28,7 @@ import { decodeMachine } from '../src/chain/decode'
 import { walkHistory, decodeUnlocking, TxSource } from '../src/chain/history'
 import { loadConfig, describeConfig } from '../src/chain/config'
 import { addressBalance, chainInfo } from '../src/chain/provider'
-import { inspectCommand } from '../src/cli/inspect'
+import { deadManText, inspectCommand } from '../src/cli/inspect'
 import { main } from '../src/cli/k17forth'
 import { loadK17Artifact } from '../src/chain/artifact'
 
@@ -549,6 +549,42 @@ sign_anyway = true
                 `roster 0 key=11111111.. payout=${payoutOf(keeperAddress)}`
             )
             expect(text).to.not.contain('ERR')
+        })
+
+        it('prints the dead-man interval: off, or seconds with a unit', async () => {
+            const { chain, cycle2 } = await realChain()
+            const off: string[] = []
+            await inspectCommand(
+                [cycle2.tx.id],
+                { out: (l) => off.push(l), err: () => undefined },
+                chain
+            )
+            expect(off.join('\n')).to.contain('dead-man: off')
+
+            const m = newMachine(
+                compileToHex('yield'),
+                { ...ECON, deadMan: 2_592_000n },
+                T0
+            )
+            const tx = new bsv.Transaction().addOutput(
+                new bsv.Transaction.Output({
+                    script: m.lockingScript,
+                    satoshis: 1000,
+                })
+            )
+            chain.add(tx)
+            expect(
+                decodeMachine(m.lockingScript.toHex()).machine?.deadMan
+            ).to.equal(2_592_000n)
+            const on: string[] = []
+            await inspectCommand(
+                [`${tx.id}:0`],
+                { out: (l) => on.push(l), err: () => undefined },
+                chain
+            )
+            expect(on.join('\n')).to.contain('dead-man: 2592000 s (30 days)')
+            expect(deadManText(21_600n)).to.equal('21600 s (6 hours)')
+            expect(deadManText(21_601n)).to.equal('21601 s')
         })
 
         it('prints history with --history', async () => {

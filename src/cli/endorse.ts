@@ -34,7 +34,12 @@ import {
     hideSecrets,
     loadConfig,
 } from '../chain/config'
-import { Keeper, KeeperOptions, PendingInput } from '../chain/keeper'
+import {
+    Keeper,
+    KeeperOptions,
+    PendingInput,
+    WAITING_FOR_MTP,
+} from '../chain/keeper'
 import { parseOutpoint } from '../chain/history'
 import { decodeMachine } from '../chain/decode'
 import { makeProvider, makeSigner } from '../chain/provider'
@@ -53,6 +58,14 @@ const MAINNET_SWITCH = 'i-know-this-spends-real-money'
 
 /** Most cycles the command runs before the endorsement cycle. */
 const MAX_LEAD_CYCLES = 1
+
+/**
+ * Hint after a tick that waited for the chain clock (v3.1 MIN_STEP): a cycle
+ * that keeps the machine alive needs a lock time 60 s after the one before,
+ * and the lock time is MTP - 1, so the next one needs a new block.
+ */
+const MTP_HINT =
+    'endorse: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.'
 
 /** Parts of `endorse` that tests replace. */
 export interface EndorseDeps {
@@ -205,11 +218,13 @@ export async function endorseCommand(
             }
             if (first.skipped !== 'needs witness') {
                 io.err(hide(`endorse: ${tickLine(first)}`))
+                if (first.skipped === WAITING_FOR_MTP) io.err(MTP_HINT)
                 return 1
             }
             const result = await keeper.tick(now(), input, mtp)
             if (!result.txid) {
                 io.err(hide(`endorse: ${tickLine(result)}`))
+                if (result.skipped === WAITING_FOR_MTP) io.err(MTP_HINT)
                 if (/witness rejected/.test(result.error ?? ''))
                     io.err(
                         `endorse: the machine refuses the endorsement; slots are endorsed in order (1, 2, ...), each one time, before the enrolment deadline`

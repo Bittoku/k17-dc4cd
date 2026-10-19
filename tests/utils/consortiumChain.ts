@@ -189,6 +189,17 @@ export function keeperOptions(
     }
 }
 
+/**
+ * A wall clock for gateway and endorse tests that moves 60 s (MIN_STEP) for
+ * every machine spend on the chain, so each cycle gets a lock time at least
+ * 60 s after the one before it, and idle ticks do not move it.
+ * Input: the chain and the clock value before the first spend. Output: the
+ * clock function (unix seconds).
+ */
+export function chainClock(chain: MemoryChain, first: number): () => number {
+    return () => first + 60 * chain.cycleBroadcasts
+}
+
 /** A chain tip that a test can move: the median time past, or a failure. */
 export interface ChainTip {
     mtp: number
@@ -234,8 +245,8 @@ export async function consortiumOnChain(
     })
     if (enrol) {
         const keeper = new Keeper(cfg, chain, signer, keeperOptions(chain))
-        expect((await keeper.tick(T0 + 1)).txid).to.be.a('string')
-        const endorsed = await keeper.tick(T0 + 2, {
+        expect((await keeper.tick(T0 + 60)).txid).to.be.a('string')
+        const endorsed = await keeper.tick(T0 + 120, {
             witness: [],
             sig: signEndorsement(
                 sponsor,
@@ -257,16 +268,19 @@ export async function consortiumOnChain(
 
 /**
  * Run idle ticks until a status line matches.
- * Input: the gateway, the pattern and the most ticks to run.
+ * Input: the gateway, the pattern, the most ticks to run and a function
+ * that runs before each tick (for example to move the chain tip).
  * Output: the matching line. Throws with all lines when none matches.
  */
 export async function tickUntil(
     gateway: Gateway,
     pattern: RegExp,
-    most = 8
+    most = 8,
+    beforeTick: () => void = () => undefined
 ): Promise<string> {
     const lines: string[] = []
     for (let i = 0; i < most; i++) {
+        beforeTick()
         const line = await gateway.tickIdle()
         lines.push(line)
         if (pattern.test(line)) return line

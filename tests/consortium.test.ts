@@ -496,14 +496,16 @@ describe('consortium: on chain', function () {
         const m = await deploy(prog, undefined, consortiumMemory(OPTS))
         const id = m.instanceId
         let value = BigInt(FUNDING)
-        let r = await cycle(m, value, T0 + 1n)
+        // Every cycle that keeps the machine alive is 60 s (MIN_STEP) or
+        // more after the one before it.
+        let r = await cycle(m, value, T0 + 60n)
         value = r.plan.remaining
         for (let k = 0; k < 3; k++) {
             const e = endorsement(k, id)
             r = await cycle(
                 r.next as K17Machine,
                 value,
-                T0 + BigInt(k + 2),
+                T0 + BigInt(60 * (k + 2)),
                 [],
                 e.sig,
                 {
@@ -514,9 +516,9 @@ describe('consortium: on chain', function () {
             )
             value = r.plan.remaining
         }
-        r = await cycle(r.next as K17Machine, value, T0 + 10n) // roster full
+        r = await cycle(r.next as K17Machine, value, T0 + 300n) // roster full
         value = r.plan.remaining
-        r = await cycle(r.next as K17Machine, value, T0 + 11n) // round 0 opens
+        r = await cycle(r.next as K17Machine, value, T0 + 360n) // round 0 opens
         value = r.plan.remaining
 
         const relay = async (
@@ -535,7 +537,7 @@ describe('consortium: on chain', function () {
                 { attestKey: d.attestKey }
             )
             value = r.plan.remaining
-            r = await cycle(r.next as K17Machine, value, lockTime + 1n)
+            r = await cycle(r.next as K17Machine, value, lockTime + 60n)
             value = r.plan.remaining
             const out = r.tx.outputs[2]
             expect(r.plan.reward > 0n).to.equal(true)
@@ -547,15 +549,15 @@ describe('consortium: on chain', function () {
 
         const t0 = BigInt(OPTS.start) + 100n
         for (const [i, slot] of [2, 1, 3].entries()) {
-            await relay(t0 + BigInt(10 * i), 0, slot)
+            await relay(t0 + BigInt(120 * i), 0, slot)
         }
         const close0 = BigInt(roundClose(OPTS, 0))
         r = await cycle(r.next as K17Machine, value, close0)
         value = r.plan.remaining
-        r = await cycle(r.next as K17Machine, value, close0 + 1n)
+        r = await cycle(r.next as K17Machine, value, close0 + 60n)
         value = r.plan.remaining
         for (const [i, slot] of [3, 1, 2].entries()) {
-            await relay(close0 + 10n + BigInt(10 * i), 1, slot)
+            await relay(close0 + 120n + BigInt(120 * i), 1, slot)
         }
         r = await cycle(
             r.next as K17Machine,
@@ -580,11 +582,11 @@ describe('consortium: on chain', function () {
             consortiumMemory(OPTS)
         )
         let value = BigInt(FUNDING)
-        const r = await cycle(m, value, T0 + 1n)
+        const r = await cycle(m, value, T0 + 60n)
         value = r.plan.remaining
         const e = endorsement(0, ID) // signed for the VM-test instance id
         await expect(
-            cycle(r.next as K17Machine, value, T0 + 2n, [], e.sig, {
+            cycle(r.next as K17Machine, value, T0 + 120n, [], e.sig, {
                 attestKey: e.attestKey,
                 endorseKey: e.endorseKey,
                 payoutHex: e.payout,

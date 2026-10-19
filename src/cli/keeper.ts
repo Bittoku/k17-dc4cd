@@ -41,16 +41,17 @@ export interface KeeperCommandDeps {
 
 /**
  * One line that describes a tick.
- * Input: the tick result. Output: the line.
+ * Input: the tick result. Output: the line; a cycle that the dead-man
+ * halted carries the words "dead-man halt".
  */
 export function tickLine(result: TickResult): string {
     const resync = result.resynced ? ' (after resync)' : ''
     if (result.txid)
         return `cycle ${result.txid} lockTime ${result.lockTime} (mtp ${
             result.mtp
-        }) reward ${result.reward}${resync} -> ${
-            result.halted ? 'halted' : result.outpoint
-        }`
+        }) reward ${result.reward}${
+            result.deadManHalt ? ' (dead-man halt)' : ''
+        }${resync} -> ${result.halted ? 'halted' : result.outpoint}`
     if (result.skipped) return `skipped: ${result.skipped}${resync}`
     return `error: ${result.error}${resync}`
 }

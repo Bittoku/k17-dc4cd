@@ -17,6 +17,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { DummyProvider, TestWallet, bsv } from 'scrypt-ts'
 import {
+    DEAD_MAN_FLOOR,
     K17Machine,
     addrOf,
     assemble,
@@ -41,7 +42,7 @@ import {
     wocUnspent,
 } from '../src/chain/provider'
 import { deployCommand } from '../src/cli/deploy'
-import { keeperCommand } from '../src/cli/keeper'
+import { keeperCommand, tickLine } from '../src/cli/keeper'
 import { CliIo, main } from '../src/cli/k17forth'
 
 const T0 = 1_760_000_000
@@ -119,13 +120,14 @@ function setup(): { chain: MemoryChain; signer: TestWallet } {
     return { chain, signer: new TestWallet(WALLET_KEY, chain) }
 }
 
-/** Deploy `prog` on the chain. Output: the configuration that names it. */
+/** Deploy `prog` on the chain (optional dead-man seconds). Output: the configuration that names it. */
 async function deployed(
     chain: MemoryChain,
     signer: TestWallet,
-    prog: string
+    prog: string,
+    deadMan = 0n
 ): Promise<GatewayConfig> {
-    const m = newMachine(prog, ECON, BigInt(T0))
+    const m = newMachine(prog, { ...ECON, deadMan }, BigInt(T0))
     await m.connect(signer)
     const tx = await m.deploy(FUNDING)
     expect(chain.txs.has(tx.id)).to.equal(true)
@@ -210,32 +212,32 @@ describe('keeper', function () {
             factoringBountyProgram(15, 50)
         )
         const keeper = keeperOn(cfg, chain, signer)
-        expect((await keeper.tick(T0 + 10)).txid).to.be.a('string') // YIELD
-        expect((await keeper.tick(T0 + 20)).skipped).to.equal('needs witness')
-        const solved = await keeper.tick(T0 + 30, {
+        expect((await keeper.tick(T0 + 60)).txid).to.be.a('string') // YIELD
+        expect((await keeper.tick(T0 + 120)).skipped).to.equal('needs witness')
+        const solved = await keeper.tick(T0 + 180, {
             witness: [3n, 5n],
         })
         expect(solved.error).to.equal(undefined)
         expect(solved.halted).to.equal(true)
-        expect((await keeper.tick(T0 + 40)).skipped).to.equal('machine halted')
+        expect((await keeper.tick(T0 + 240)).skipped).to.equal('machine halted')
     })
 
     it('keeper resyncs after a conflicting spend', async () => {
         const { chain, signer } = setup()
         const cfg = await deployed(chain, signer, heartbeatProgram())
         // Another keeper spends the deployment output first.
-        const rival = await keeperOn(cfg, chain, signer).tick(T0 + 50)
+        const rival = await keeperOn(cfg, chain, signer).tick(T0 + 60)
         expect(rival.txid).to.be.a('string')
         // This keeper still knows only the deployment outpoint.
         const keeper = keeperOn(cfg, chain, signer)
         const before = chain.cycleBroadcasts
-        const result = await keeper.tick(T0 + 100)
+        const result = await keeper.tick(T0 + 160)
         expect(result.error).to.equal(undefined)
         expect(result.resynced).to.equal(true)
         expect(chain.cycleBroadcasts - before).to.equal(2)
         const tx = chain.txs.get(result.txid!)!
         expect(tx.inputs[0].prevTxId.toString('hex')).to.equal(rival.txid)
-        expect(machineOf(tx).lastTime).to.equal(BigInt(T0 + 100))
+        expect(machineOf(tx).lastTime).to.equal(BigInt(T0 + 160))
     })
 
     it('retries a conflict only once, then returns { error }', async () => {
@@ -290,14 +292,73 @@ describe('keeper', function () {
         expect(chain.cycleBroadcasts).to.equal(before)
     })
 
+    it('skips with "waiting for MTP" until MTP - 1 is 60 s past lastTime', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        const before = chain.cycleBroadcasts
+        // MTP - 1 = T0 + 59: one second short of lastTime + MIN_STEP.
+        const early = await keeperOn(cfg, chain, signer, T0 + 60).tick(T0 + 500)
+        expect(early.skipped).to.equal('waiting for MTP')
+        expect(early.error).to.equal(undefined)
+        expect(early.txid).to.equal(undefined)
+        expect(chain.cycleBroadcasts).to.equal(before)
+        // MTP - 1 = T0 + 60: exactly lastTime + MIN_STEP.
+        const ready = await keeperOn(cfg, chain, signer, T0 + 61).tick(T0 + 500)
+        expect(ready.error).to.equal(undefined)
+        expect(ready.lockTime).to.equal(T0 + 60)
+        expect(ready.reward).to.equal(160n) // 100 + 1 sat/s * 60 s
+        expect(ready.deadManHalt).to.equal(undefined)
+    })
+
+    it('a keeper that ticks twice at the same MTP waits for the next block', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        const keeper = keeperOn(cfg, chain, signer, T0 + 601)
+        expect((await keeper.tick(T0 + 5000)).lockTime).to.equal(T0 + 600)
+        expect((await keeper.tick(T0 + 5000)).skipped).to.equal(
+            'waiting for MTP'
+        )
+    })
+
+    it('reports a dead-man halt and refunds without a witness', async () => {
+        const { chain, signer } = setup()
+        const deadMan = DEAD_MAN_FLOOR
+        // IN blocks the program: only the dead-man can end it.
+        const cfg = await deployed(
+            chain,
+            signer,
+            assemble(['IN', 'OUT', 'HALT']),
+            deadMan
+        )
+        const due = T0 + Number(deadMan)
+        // One second before the dead-man: the program still waits.
+        const early = await keeperOn(cfg, chain, signer, due).tick(due)
+        expect(early.skipped).to.equal('needs witness')
+        const result = await keeperOn(cfg, chain, signer, due + 1).tick(due + 5)
+        expect(result.error).to.equal(undefined)
+        expect(result.lockTime).to.equal(due)
+        expect(result.halted).to.equal(true)
+        expect(result.deadManHalt).to.equal(true)
+        expect(result.outpoint).to.equal(undefined)
+        const tx = chain.txs.get(result.txid!)!
+        // The refund layout: no machine output remains.
+        expect(
+            tx.outputs.some((o) => o.script.toBuffer().length > 10_000)
+        ).to.equal(false)
+        expect(tickLine(result)).to.contain('dead-man halt')
+        expect(tickLine({ ...result, deadManHalt: undefined })).to.not.contain(
+            'dead-man'
+        )
+    })
+
     it('resync walks forward over several rival cycles', async () => {
         const { chain, signer } = setup()
         const cfg = await deployed(chain, signer, heartbeatProgram())
         const rival = keeperOn(cfg, chain, signer)
         let last = ''
-        for (const t of [10, 20, 30]) last = (await rival.tick(T0 + t)).txid!
+        for (const t of [60, 120, 180]) last = (await rival.tick(T0 + t)).txid!
         const keeper = keeperOn(cfg, chain, signer)
-        const result = await keeper.tick(T0 + 100)
+        const result = await keeper.tick(T0 + 300)
         expect(result.error).to.equal(undefined)
         expect(result.resynced).to.equal(true)
         const tx = chain.txs.get(result.txid!)!
@@ -312,12 +373,12 @@ describe('keeper', function () {
             factoringBountyProgram(15, 50)
         )
         const rival = keeperOn(cfg, chain, signer)
-        await rival.tick(T0 + 10) // YIELD
+        await rival.tick(T0 + 60) // YIELD
         expect(
-            (await rival.tick(T0 + 20, { witness: [3n, 5n] })).halted
+            (await rival.tick(T0 + 120, { witness: [3n, 5n] })).halted
         ).to.equal(true)
         const keeper = keeperOn(cfg, chain, signer)
-        const result = await keeper.tick(T0 + 100)
+        const result = await keeper.tick(T0 + 200)
         expect(result).to.deep.include({
             skipped: 'machine halted',
             halted: true,
@@ -325,7 +386,7 @@ describe('keeper', function () {
         })
         expect(keeper.outpoint).to.equal(undefined)
         const before = chain.cycleBroadcasts
-        expect((await keeper.tick(T0 + 200)).halted).to.equal(true)
+        expect((await keeper.tick(T0 + 300)).halted).to.equal(true)
         expect(chain.cycleBroadcasts).to.equal(before)
     })
 
@@ -344,7 +405,7 @@ describe('keeper', function () {
     it('reports a resync error when the spends lookup answers nonsense', async () => {
         const { chain, signer } = setup()
         const cfg = await deployed(chain, signer, heartbeatProgram())
-        await keeperOn(cfg, chain, signer).tick(T0 + 50)
+        await keeperOn(cfg, chain, signer).tick(T0 + 60)
         const keeper = new Keeper(cfg, chain, signer, {
             chainInfo: async () => ({ mediantime: T0 + 1000, blocks: 1 }),
             fetch: async () => ({
@@ -753,6 +814,53 @@ describe('deploy and keeper commands', function () {
         expect(printed).to.not.contain(WALLET_KEY.toWIF())
     })
 
+    it('deploy --dead-man refuses an interval below 6 hours and writes nothing', async () => {
+        const { chain, signer } = setup()
+        const config = configFile('gw-dm-low.toml')
+        const before = readFileSync(config, 'utf8')
+        const { lines, io } = sink()
+        const code = await deployCommand(
+            [...ARGS(config), '--dead-man', '3600'],
+            io,
+            {
+                signer,
+                chainInfo: async () => ({ mediantime: T0, blocks: 1 }),
+                now: () => T0,
+            }
+        )
+        expect(code).to.equal(2)
+        expect(lines.join('\n')).to.contain('--dead-man')
+        expect(chain.txs.size).to.equal(0)
+        expect(readFileSync(config, 'utf8')).to.equal(before)
+        const text = await deployCommand(
+            [...ARGS(config), '--dead-man', 'soon'],
+            sink().io,
+            { signer }
+        )
+        expect(text).to.equal(2)
+    })
+
+    it('deploy --dead-man 2592000 sets the interval; the default is off', async () => {
+        for (const [flags, expected] of [
+            [['--dead-man', '2592000'], 2592000n],
+            [['--dead-man', '0'], 0n],
+            [[], 0n],
+        ] as [string[], bigint][]) {
+            const { chain, signer } = setup()
+            const config = configFile('gw-dm.toml')
+            const { lines, io } = sink()
+            const code = await deployCommand([...ARGS(config), ...flags], io, {
+                signer,
+                chainInfo: async () => ({ mediantime: T0, blocks: 1 }),
+                now: () => T0,
+            })
+            expect(lines.join('\n')).to.not.contain('ERR')
+            expect(code).to.equal(0)
+            const [txid] = loadConfig(config).machineOutpoint!.split(':')
+            expect(machineOf(chain.txs.get(txid)!).deadMan).to.equal(expected)
+        }
+    })
+
     it('deploy builds sponsor memory and a fixed roster from flags', async () => {
         const { chain, signer } = setup()
         const config = configFile('gw-sponsor.toml')
@@ -842,6 +950,7 @@ describe('deploy and keeper commands', function () {
         )
         chmodSync(config, 0o600)
         const { lines, io } = sink()
+        let clockCalls = 0
         const code = await keeperCommand(['--config', config], io, {
             provider: chain,
             signer,
@@ -850,7 +959,8 @@ describe('deploy and keeper commands', function () {
                 spentBy: (op) => chain.spentBy(op),
             },
             ticks: 2,
-            now: () => T0 + 100,
+            // Each tick sees a clock 100 s later: MIN_STEP needs 60 s per cycle.
+            now: () => T0 + 100 * ++clockCalls,
             sleep: async () => undefined,
         })
         expect(code).to.equal(0)

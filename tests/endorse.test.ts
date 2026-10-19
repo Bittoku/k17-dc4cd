@@ -25,6 +25,7 @@ import {
     OPTS,
     PAYOUT_ADDRESS,
     WALLET_KEY,
+    chainClock,
     consortiumOnChain,
     expectNoSecret,
     keeperOptions,
@@ -117,7 +118,7 @@ describe('k17forth endorse', function () {
             provider: chain,
             signer,
             keeper: keeperOptions(chain),
-            now: () => OPTS.start - 100,
+            now: chainClock(chain, OPTS.start - 100),
         })
         expect(code).to.equal(0)
         const endorsed = lines.find((l) => /^endorsed slot 1 /.test(l))
@@ -134,7 +135,7 @@ describe('k17forth endorse', function () {
         // resyncs), relays a reading of round 0 and is paid for it.
         const gateway = new Gateway(cfg, chain, signer, {
             keeper: keeperOptions(chain),
-            now: () => OPTS.start + 100,
+            now: chainClock(chain, OPTS.start + 100),
         })
         const line = await gateway.handleReading(5231)
         expect(line).to.not.contain('refused')
@@ -151,7 +152,7 @@ describe('k17forth endorse', function () {
             provider: chain,
             signer,
             keeper: keeperOptions(chain),
-            now: () => OPTS.start - 100,
+            now: chainClock(chain, OPTS.start - 100),
         })
         expect(code).to.equal(1)
         expect(lines.join('\n')).to.contain('not the sponsor')
@@ -170,7 +171,7 @@ describe('k17forth endorse', function () {
             provider: chain,
             signer,
             keeper: keeperOptions(chain),
-            now: () => OPTS.start - 100,
+            now: chainClock(chain, OPTS.start - 100),
         })
         expect(code).to.equal(1)
         const text = lines.join('\n')
@@ -191,7 +192,7 @@ describe('k17forth endorse', function () {
             provider: chain,
             signer,
             keeper: keeperOptions(chain),
-            now: () => OPTS.start - 100,
+            now: chainClock(chain, OPTS.start - 100),
         })
         expect(code).to.equal(1)
         expect(lines.join('\n')).to.contain(

@@ -29,7 +29,17 @@ held write-up belong here.
   `require`) fails any test that calls a non-local host. Inject `provider`, `signer`, `keeper` (chain info, spends lookup)
   and `now` through each command's deps. Consortium fixtures live in
   `tests/utils/consortiumChain.ts`.
-- Lock time is always min(now, MTP - 1); never use the wall clock for a lock time.
+- Lock time is always min(now, MTP - 1); never use the wall clock for a lock time. Since v3.1 a cycle
+  that keeps the machine alive needs lockTime >= lastTime + 60 (MIN_STEP), and the keeper plans first:
+  when `planCycle` throws a MIN_STEP error the tick is `skipped: 'waiting for MTP'` (not an error; the
+  chain clock has not moved 60 s past `lastTime`). With MTP - 1 the keeper makes one live cycle per
+  block and has no clock lag. The faster mode (lockTime = lastTime + 60, up to about 10 cycles per
+  block, but with clock lag) is not implemented. `gateway` and `endorse` use the same `Keeper.tick`, so
+  they get the same policy: a lead cycle before the endorsement makes `endorse` report
+  `waiting for MTP` until the next block. A halting cycle (fault, HALT, dead-man) is exempt.
+  `TickResult.deadManHalt` and the keeper log line ("dead-man halt") report a dead-man refund.
+- `deploy --dead-man <seconds>` sets the immutable dead-man interval (0 = off; otherwise at least
+  `DEAD_MAN_FLOOR`, 6 h). Use 30 days for daily rounds. `inspect` prints it (`dead-man: off`).
 - `makeProvider` lists coins from WhatsOnChain `confirmed/unspent` + `unconfirmed/unspent` and
   drops coins with `isSpentInMempoolTx`. Plain `/unspent` keeps mempool-spent coins and causes
   `txn-mempool-conflict` across processes.
@@ -38,7 +48,9 @@ held write-up belong here.
   unhandled; the CLI turns "connect failed" into a warning.
 - `K17Machine.step` has 10 parameters (the last three are `leafPre`, `proof`, `leafIndex`), and the history
   decoder (`decodeUnlocking` in `src/chain/history.ts`) reads 10 unlocking-script chunks. Pass all three
-  from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`.
+  from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`. Pre-v3.1 machines do not
+  decode under the v3.1 artifact (`fromLockingScript` gives TEMPLATE_MISMATCH); the `deadMan` field
+  changed the script.
 - The `keeper` command never supplies a roster-tree proof to `planCycle`, so it cannot relay MEMBER,
   ADMIT or REMOVE cycles yet; on such a machine it reports `plan: ...` and broadcasts nothing (fails safe).
   Tree-mode relaying is a later plan.

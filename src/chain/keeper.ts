@@ -10,6 +10,13 @@
  *   lags the wall clock by 40 to 50 minutes. The keeper uses
  *   min(now, MTP - 1), and skips the tick when that is below the machine's
  *   `lastTime` (the contract refuses a lock time before `lastTime`).
+ * - v3.1 MIN_STEP: a cycle that keeps the machine alive needs
+ *   lockTime >= lastTime + 60. The keeper plans first; when planCycle
+ *   reports MIN_STEP, the tick is skipped with 'waiting for MTP' (the chain
+ *   clock has not moved 60 s past lastTime yet). With MTP - 1 this gives one
+ *   live cycle per block and no clock lag; the faster +60 stepping mode is
+ *   not implemented. A halting cycle (dead-man, fault, HALT) is exempt, and
+ *   its plan reports `deadManHalt`.
  * - Chains of unconfirmed cycles are accepted, so the keeper does not wait
  *   for a confirmation. It keeps the transaction of the latest cycle it made
  *   and spends that one next.
@@ -67,6 +74,13 @@ export interface TickResult {
     /** Satoshis paid to the keeper. */
     reward?: bigint
     /**
+     * True when the cycle was a dead-man halt (v3.1): the machine passed its
+     * dead-man interval, so the cycle refunded the beneficiary without
+     * running the program. Implies `halted`. Set only when a cycle was
+     * broadcast.
+     */
+    deadManHalt?: boolean
+    /**
      * Cells that this cycle added to the output log (OUT), in order; empty
      * when it added none. Set only when a cycle was broadcast.
      */
@@ -105,6 +119,12 @@ interface Current {
     tx: bsv.Transaction
     vout: number
 }
+
+/**
+ * Skip reason of a tick whose cycle would break MIN_STEP: MTP - 1 is less
+ * than 60 s past the machine's lastTime. Not an error; a later tick works.
+ */
+export const WAITING_FOR_MTP = 'waiting for MTP'
 
 /** Result of a tick on a machine that is halted. */
 const HALTED: TickResult = { skipped: 'machine halted', halted: true }
@@ -420,6 +440,9 @@ export class Keeper {
             const message = messageOf(e)
             if (/needs a witness/.test(message))
                 return { result: { mtp, skipped: 'needs witness' } }
+            // The chain clock has not advanced MIN_STEP past lastTime yet.
+            if (/MIN_STEP/.test(message))
+                return { result: { mtp, skipped: WAITING_FOR_MTP } }
             return { result: { mtp, error: `plan: ${message}` } }
         }
         try {
@@ -454,6 +477,7 @@ export class Keeper {
                     reward: plan.reward,
                     logged,
                     halted: plan.halted,
+                    ...(plan.deadManHalt ? { deadManHalt: true } : {}),
                 },
             }
         } catch (e) {

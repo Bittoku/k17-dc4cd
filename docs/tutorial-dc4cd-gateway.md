@@ -143,10 +143,13 @@ Deploy the machine. The `--sponsor` value is the public key hash of the sponsor 
 ```bash
 k17forth deploy consortium.fs --config sponsor.toml --deposit 50000 \
   --reward-min 100 --slope 1 --reward-max 500 \
-  --sponsor 5a021e1f49100c5e753a94ab89a6d094221d2155fc5a61964e93df08d3cfb5a2
+  --sponsor 5a021e1f49100c5e753a94ab89a6d094221d2155fc5a61964e93df08d3cfb5a2 \
+  --dead-man 2592000
 ```
 
 The command prints the outpoint and the instance id. It writes both into the `[machine]` table of the sponsor config. Send the `[machine]` table and the `[consortium]` table to each landowner. Each landowner adds them to their config file.
+
+The `--dead-man` value is a refund timer in seconds (the minimum is 21600, 6 hours): when no cycle ran for that long, any keeper can halt the machine and send the deposit back to the sponsor, so a stuck program cannot lock the money. For daily rounds, use 30 days (2592000).
 
 The deposit pays the landowners and the keepers. A keeper gets 100 to 500 satoshis for each cycle in this example. When the machine stops, the rest of the deposit goes back to the sponsor.
 

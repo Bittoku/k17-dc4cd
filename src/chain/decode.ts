@@ -36,6 +36,8 @@ export interface DecodedMachine {
     rewardMin: bigint
     slope: bigint
     rewardMax: bigint
+    /** Dead-man interval in seconds (v3.1); 0n means off. */
+    deadMan: bigint
     instanceId: string
 }
 
@@ -116,6 +118,7 @@ export function decodeInstance(lockingScriptHex: string): DecodedInstance {
             rewardMin: instance.rewardMin,
             slope: instance.slope,
             rewardMax: instance.rewardMax,
+            deadMan: instance.deadMan,
             instanceId: instance.instanceId,
         },
     }

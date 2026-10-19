@@ -109,10 +109,38 @@ export interface CycleReport {
     roster: RosterView[]
     /** Non-zero program cells below the roster, as [cell, value]. */
     memory: [number, bigint][]
+    /**
+     * Warning about the cycle, for example that the chain would refuse it
+     * (MIN_STEP); absent when there is none.
+     */
+    warning?: string
 }
+
+/** Smallest clock advance between two cycles that keep the machine alive (K17Machine.MIN_STEP, 60 s). */
+const MIN_STEP_SECONDS = 60n
 
 /** Statuses after which no later cycle can run. */
 const STOPPING: Status[] = ['halted', 'fault', 'need_witness', 'verify_failed']
+
+/**
+ * Warning text for a cycle that the chain would refuse because it follows an
+ * alive cycle less than MIN_STEP (60 s) later. The VM does not enforce this
+ * rule; the contract does (v3.1). A cycle that halts is exempt.
+ * Input: nLockTime of the previous alive cycle (undefined for the first
+ * cycle), nLockTime of this cycle, and whether this cycle keeps the machine
+ * alive. Output: one warning line, or undefined when the cycle is fine.
+ */
+export function minStepWarning(
+    previousLockTime: bigint | undefined,
+    lockTime: bigint,
+    alive: boolean
+): string | undefined {
+    if (previousLockTime === undefined || !alive) return undefined
+    if (lockTime >= previousLockTime + MIN_STEP_SECONDS) return undefined
+    return `warning: the chain would refuse this cycle: MIN_STEP (needs lockTime >= ${
+        previousLockTime + MIN_STEP_SECONDS
+    }, the previous alive cycle's lockTime plus ${MIN_STEP_SECONDS} s)`
+}
 
 /**
  * Seeded attesters by name. Keys are generated on first use and cached,
@@ -323,6 +351,7 @@ export function runScenario(
         scenario.slots ? memoryWithRoster(book, scenario.slots) : undefined
     )
     const reports: CycleReport[] = []
+    let previousAliveLockTime: bigint | undefined
     for (let index = 0; index < scenario.cycles.length; index++) {
         const env = cycleEnvironment(
             book,
@@ -332,17 +361,24 @@ export function runScenario(
         )
         const r = stepK(state, env, K17Machine.K)
         state = r.state
-        reports.push(
-            reportOf(
-                index,
-                r.status,
-                env.lockTime,
-                state,
-                r.witnessUsed,
-                r.bountyDue,
-                r.payslot
-            )
+        const report = reportOf(
+            index,
+            r.status,
+            env.lockTime,
+            state,
+            r.witnessUsed,
+            r.bountyDue,
+            r.payslot
         )
+        const alive = !STOPPING.includes(r.status)
+        const warning = minStepWarning(
+            previousAliveLockTime,
+            env.lockTime,
+            alive
+        )
+        if (warning) report.warning = warning
+        if (alive) previousAliveLockTime = env.lockTime
+        reports.push(report)
         if (STOPPING.includes(r.status)) break
     }
     return reports
@@ -372,6 +408,7 @@ export function formatReport(report: CycleReport): string[] {
         lines.push(
             `roster ${r.slot} key=${r.keyHashShort}.. payout=${r.payoutHex}`
         )
+    if (report.warning) lines.push(report.warning)
     if (report.bountyDue > 0n) lines.push(`bounty ${report.bountyDue}`)
     if (report.payslot)
         lines.push(

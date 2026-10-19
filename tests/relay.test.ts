@@ -165,7 +165,7 @@ describe('relay: on chain', function () {
     it('three attested hops, every cycle script-verified, retrieval in the output log', async () => {
         const m = await deploy(relayProgram(OPTS), roster)
         let value = BigInt(FUNDING)
-        let r = await cycle(m, value, T0 + 1n)
+        let r = await cycle(m, value, T0 + 60n)
         value = r.plan.remaining
         let paidBounty = 0n
         for (let k = 0; k < 3; k++) {
@@ -177,7 +177,7 @@ describe('relay: on chain', function () {
             r = await cycle(
                 r.next as K17Machine,
                 value,
-                T0 + BigInt(k + 2),
+                T0 + BigInt(60 * (k + 2)),
                 [READINGS[k]],
                 sig
             )
@@ -185,7 +185,7 @@ describe('relay: on chain', function () {
             paidBounty += r.plan.bounty
         }
         expect(paidBounty).to.equal(3n * BigInt(OPTS.bountyPerHop))
-        r = await cycle(r.next as K17Machine, value, T0 + 10n)
+        r = await cycle(r.next as K17Machine, value, T0 + 600n)
         expect(r.plan.halted).to.be.true
         expect(outputLog(r.plan.nextState)).to.deep.equal([
             3n,
@@ -199,12 +199,12 @@ describe('relay: on chain', function () {
 
     it('a hop attested by the wrong roster member is refused', async () => {
         const m = await deploy(relayProgram(OPTS), roster)
-        const r = await cycle(m, BigInt(FUNDING), T0 + 1n)
+        const r = await cycle(m, BigInt(FUNDING), T0 + 60n)
         await expect(
             cycle(
                 r.next as K17Machine,
                 r.plan.remaining,
-                T0 + 2n,
+                T0 + 120n,
                 [READINGS[0]],
                 signReading(attesters[2], relayTag(OPTS, 0), READINGS[0])
             )

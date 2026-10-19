@@ -36,6 +36,7 @@ import {
     decodeCells,
     formatReport,
     memoryWithRoster,
+    minStepWarning,
     reportOf,
     toBig,
 } from './scenario'
@@ -91,6 +92,8 @@ export class Repl {
     /** Byte offset where the next line's code starts. */
     private mainEnd = 0
     private lockTime = 0n
+    /** nLockTime of the last cycle (YIELD) that kept the machine alive. */
+    private lastAliveLockTime: bigint | undefined
     private value = 0n
     private pending: CycleSpec = { lockTime: 0 }
     private lineCount = 0
@@ -261,6 +264,16 @@ export class Repl {
             bountyDue,
             payslot
         )
+        // Only a YIELD ends a cycle that keeps the machine alive.
+        if (status === 'yield') {
+            const warning = minStepWarning(
+                this.lastAliveLockTime,
+                this.lockTime,
+                true
+            )
+            if (warning) report.warning = warning
+            this.lastAliveLockTime = this.lockTime
+        }
         return [status, ...formatReport(report)]
     }
 
@@ -373,6 +386,7 @@ export class Repl {
                 this.source = ''
                 this.mainEnd = 0
                 this.pending = { lockTime: 0 }
+                this.lastAliveLockTime = undefined
                 this.state = this.freshState()
                 return this.view('ok')
             case '.save':

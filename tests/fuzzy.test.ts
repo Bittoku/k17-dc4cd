@@ -144,19 +144,19 @@ describe('fuzzy: on chain', function () {
     it('attested opinions, script-verified, alarm bounty released', async () => {
         const m = await deploy(fuzzyProgram(OPTS), roster)
         let value = BigInt(FUNDING)
-        let r = await cycle(m, value, T0 + 1n)
+        let r = await cycle(m, value, T0 + 60n)
         value = r.plan.remaining
         for (let k = 0; k < 3; k++) {
             r = await cycle(
                 r.next as K17Machine,
                 value,
-                T0 + BigInt(k + 2),
+                T0 + BigInt(60 * (k + 2)),
                 [OPINIONS[k]],
                 signReading(attesters[k], fuzzyTag(OPTS, k), OPINIONS[k])
             )
             value = r.plan.remaining
         }
-        r = await cycle(r.next as K17Machine, value, T0 + 9n)
+        r = await cycle(r.next as K17Machine, value, T0 + 600n)
         expect(r.plan.halted).to.be.true
         expect(outputLog(r.plan.nextState)).to.deep.equal(EXPECTED)
         expect(r.plan.bounty).to.equal(BigInt(OPTS.alarmBounty))

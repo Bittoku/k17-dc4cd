@@ -2,9 +2,11 @@
  * The `k17forth keeper` sub-command.
  *
  * Runs `Keeper.tick` for the machine in the config file, once every
- * `--interval` seconds (default 60), and prints one line per tick. It stops
- * when the machine halts. Broadcast errors are printed and the loop goes
- * on; the keeper itself retries a conflicting spend once per tick.
+ * `--interval` seconds (default 60, at least 1), and prints one line per
+ * tick. It stops when the machine halts. Broadcast errors are printed and
+ * the loop goes on; the keeper itself retries a conflicting spend once per
+ * tick. A mainnet config needs `--i-know-this-spends-real-money`, because
+ * the keeper pays fees.
  */
 
 import type { Provider, Signer } from 'scrypt-ts'
@@ -16,7 +18,10 @@ import type { CliIo } from './k17forth'
 
 /** Help text of the keeper sub-command. */
 export const KEEPER_USAGE =
-    'usage: k17forth keeper --config <gw.toml> [--interval <seconds>]'
+    'usage: k17forth keeper --config <gw.toml> [--interval <seconds>] [--i-know-this-spends-real-money]'
+
+/** Switch that allows a keeper on a mainnet machine. */
+const MAINNET_SWITCH = 'i-know-this-spends-real-money'
 
 /** Parts of `keeper` that tests replace. */
 export interface KeeperCommandDeps {
@@ -61,7 +66,7 @@ export async function keeperCommand(
     io: CliIo,
     deps: KeeperCommandDeps = {}
 ): Promise<number> {
-    const parsed = parseFlags(args, ['config', 'interval'])
+    const parsed = parseFlags(args, ['config', 'interval'], [MAINNET_SWITCH])
     if (typeof parsed === 'string') {
         io.err(parsed)
         io.err(KEEPER_USAGE)
@@ -74,11 +79,21 @@ export async function keeperCommand(
         return 2
     }
     const interval = Number(intervalText)
+    if (interval < 1) {
+        io.err('--interval must be at least 1 second')
+        return 2
+    }
     let keeper: Keeper
     let hide: (text: string) => string = (text) => text
     try {
         const cfg = loadConfig(config)
         hide = (text) => hideSecrets(text, cfg)
+        if (cfg.network === 'mainnet' && !parsed.switches.has(MAINNET_SWITCH)) {
+            io.err(
+                `mainnet keeper spends real money on fees; add --${MAINNET_SWITCH} to go on`
+            )
+            return 2
+        }
         const provider = deps.provider ?? makeProvider(cfg.network)
         let signer: Signer
         try {
@@ -101,7 +116,7 @@ export async function keeperCommand(
         const line = hide(tickLine(result))
         if (result.error) io.err(line)
         else io.out(line)
-        if (result.halted || result.skipped === 'machine halted') return 0
+        if (result.halted) return 0
         if (deps.ticks === undefined || tick < deps.ticks)
             await sleep(interval * 1000)
     }

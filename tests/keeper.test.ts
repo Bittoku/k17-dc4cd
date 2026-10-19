@@ -282,6 +282,104 @@ describe('keeper', function () {
         expect(result.mtp).to.equal(T0 - 60)
         expect(chain.cycleBroadcasts).to.equal(before)
     })
+
+    it('resync walks forward over several rival cycles', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        const rival = keeperOn(cfg, chain, signer)
+        let last = ''
+        for (const t of [10, 20, 30]) last = (await rival.tick(T0 + t)).txid!
+        const keeper = keeperOn(cfg, chain, signer)
+        const result = await keeper.tick(T0 + 100)
+        expect(result.error).to.equal(undefined)
+        expect(result.resynced).to.equal(true)
+        const tx = chain.txs.get(result.txid!)!
+        expect(tx.inputs[0].prevTxId.toString('hex')).to.equal(last)
+    })
+
+    it('resync that ends in a halt stops the keeper', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(
+            chain,
+            signer,
+            factoringBountyProgram(15, 50)
+        )
+        const rival = keeperOn(cfg, chain, signer)
+        await rival.tick(T0 + 10) // YIELD
+        expect(
+            (await rival.tick(T0 + 20, { witness: [3n, 5n] })).halted
+        ).to.equal(true)
+        const keeper = keeperOn(cfg, chain, signer)
+        const result = await keeper.tick(T0 + 100)
+        expect(result).to.deep.include({
+            skipped: 'machine halted',
+            halted: true,
+            resynced: true,
+        })
+        expect(keeper.outpoint).to.equal(undefined)
+        const before = chain.cycleBroadcasts
+        expect((await keeper.tick(T0 + 200)).halted).to.equal(true)
+        expect(chain.cycleBroadcasts).to.equal(before)
+    })
+
+    it('resync to a rival cycle with a later lastTime skips the tick', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        await keeperOn(cfg, chain, signer).tick(T0 + 500)
+        const keeper = keeperOn(cfg, chain, signer)
+        const before = chain.cycleBroadcasts
+        const result = await keeper.tick(T0 + 100)
+        expect(result.resynced).to.equal(true)
+        expect(result.skipped).to.contain('not yet past lastTime')
+        expect(chain.cycleBroadcasts - before).to.equal(1)
+    })
+
+    it('reports a resync error when the spends lookup answers nonsense', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        await keeperOn(cfg, chain, signer).tick(T0 + 50)
+        const keeper = new Keeper(cfg, chain, signer, {
+            chainInfo: async () => ({ mediantime: T0 + 1000, blocks: 1 }),
+            fetch: async () => ({
+                ok: true,
+                status: 200,
+                json: async () => ({}),
+            }),
+        })
+        const result = await keeper.tick(T0 + 100)
+        expect(result.error).to.equal(
+            'resync: could not find the spending transaction'
+        )
+    })
+
+    it('treats a configured outpoint that is not a machine as halted', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        const deployTx = chain.txs.get(cfg.machineOutpoint!.slice(0, 64))!
+        const change = deployTx.outputs.findIndex(
+            (o) => o.script.toBuffer().length < 100
+        )
+        expect(change).to.be.greaterThan(0)
+        const keeper = keeperOn(
+            { ...cfg, machineOutpoint: `${deployTx.id}:${change}` },
+            chain,
+            signer
+        )
+        const result = await keeper.tick(T0 + 100)
+        expect(result).to.deep.include({
+            skipped: 'machine halted',
+            halted: true,
+        })
+    })
+
+    it('hides config secrets in the error of a tick', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        chain.failNext = [`bad thing near ${WALLET_KEY.toWIF()}`]
+        const result = await keeperOn(cfg, chain, signer).tick(T0 + 100)
+        expect(result.error).to.contain('[hidden]')
+        expect(result.error).to.not.contain(WALLET_KEY.toWIF())
+    })
 })
 
 describe('keeper helpers', () => {
@@ -292,8 +390,13 @@ describe('keeper helpers', () => {
         expect(isConflictError('HTTP 500: bad-txns-inputs-spent')).to.equal(
             true
         )
+        expect(isConflictError('16: bad-txns-inputs-missingorspent')).to.equal(
+            true
+        )
+        expect(isConflictError('64: too-long-non-final-chain')).to.equal(true)
         expect(isConflictError('64: non-final')).to.equal(false)
         expect(isConflictError('HTTP 500: timeout')).to.equal(false)
+        expect(isConflictError('HTTP 500: input too large')).to.equal(false)
     })
 
     it('reads the spends lookup from WhatsOnChain', async () => {
@@ -315,6 +418,13 @@ describe('keeper helpers', () => {
             `https://api.whatsonchain.com/v1/bsv/test/tx/${op.txid}/1/spent`
         )
         expect(await wocSpentBy('testnet', op, answer(404))).to.equal(undefined)
+        let unexpected = ''
+        try {
+            await wocSpentBy('testnet', op, answer(200, {}))
+        } catch (e) {
+            unexpected = (e as Error).message
+        }
+        expect(unexpected).to.equal('spends lookup: unexpected response')
         let message = ''
         try {
             await wocSpentBy('mainnet', op, answer(503))
@@ -322,6 +432,45 @@ describe('keeper helpers', () => {
             message = (e as Error).message
         }
         expect(message).to.contain('503')
+    })
+
+    it('asks the mempool lookup when the confirmed lookup finds nothing', async () => {
+        const op = { txid: 'ab'.repeat(32), vout: 0 }
+        const base = `https://api.whatsonchain.com/v1/bsv/test/tx/${op.txid}/0`
+        const routes =
+            (answers: Record<string, [number, unknown?]>) =>
+            async (url: string) => {
+                const [status, body] = answers[url] ?? [500]
+                return { ok: status === 200, status, json: async () => body }
+            }
+        expect(
+            await wocSpentBy(
+                'testnet',
+                op,
+                routes({
+                    [`${base}/spent`]: [404],
+                    [`${base}/unconfirmed/spent`]: [
+                        200,
+                        {
+                            txid: 'ef'.repeat(32),
+                            vin: 0,
+                            status: 'unconfirmed',
+                        },
+                    ],
+                })
+            )
+        ).to.equal('ef'.repeat(32))
+        for (const status of [400, 404])
+            expect(
+                await wocSpentBy(
+                    'testnet',
+                    op,
+                    routes({
+                        [`${base}/spent`]: [404],
+                        [`${base}/unconfirmed/spent`]: [status],
+                    })
+                )
+            ).to.equal(undefined)
     })
 
     it('adds a [machine] table when the config has none', () => {
@@ -465,6 +614,7 @@ describe('deploy and keeper commands', function () {
     it('deploy refuses mainnet without --i-know-this-spends-real-money', async () => {
         const { chain, signer } = setup()
         const config = configFile('gw-main.toml', 'mainnet')
+        const before = readFileSync(config, 'utf8')
         const { lines, io } = sink()
         const code = await deployCommand(ARGS(config), io, {
             signer,
@@ -472,8 +622,35 @@ describe('deploy and keeper commands', function () {
         })
         expect(code).to.equal(2)
         expect(lines.join('\n')).to.contain('--i-know-this-spends-real-money')
-        expect(chain.cycleBroadcasts).to.equal(0)
+        expect(chain.txs.size).to.equal(0)
+        expect(readFileSync(config, 'utf8')).to.equal(before)
         expect(lines.join('\n')).to.not.contain(WALLET_KEY.toWIF())
+    })
+
+    it('keeper refuses a mainnet config without --i-know-this-spends-real-money', async () => {
+        const { chain, signer } = setup()
+        const config = configFile('gw-main-keeper.toml', 'mainnet')
+        const { lines, io } = sink()
+        const code = await keeperCommand(['--config', config], io, {
+            provider: chain,
+            signer,
+            ticks: 1,
+            sleep: async () => undefined,
+        })
+        expect(code).to.equal(2)
+        expect(lines.join('\n')).to.contain('--i-know-this-spends-real-money')
+        expect(chain.txs.size).to.equal(0)
+        expect(lines.join('\n')).to.not.contain(WALLET_KEY.toWIF())
+    })
+
+    it('keeper refuses an interval below 1 second', async () => {
+        const { lines, io } = sink()
+        const code = await keeperCommand(
+            ['--config', configFile('gw-interval.toml'), '--interval', '0'],
+            io
+        )
+        expect(code).to.equal(2)
+        expect(lines.join('\n')).to.contain('--interval')
     })
 
     it('keeper command runs ticks and prints each result', async () => {

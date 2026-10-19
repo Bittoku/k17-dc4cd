@@ -24,7 +24,7 @@
 import { Provider, Signer, bsv, toByteString } from 'scrypt-ts'
 import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
 import { K17Machine, NO_SIG, addrOf, bindCycleBuilder, planCycle } from 'k17-vm'
-import type { GatewayConfig } from './config'
+import { GatewayConfig, hideSecrets } from './config'
 import { ChainInfo, FetchLike, chainInfo } from './provider'
 import { Outpoint, parseOutpoint } from './history'
 import { decodeMachine } from './decode'
@@ -58,7 +58,10 @@ export interface TickResult {
     mtp?: number
     /** Satoshis paid to the keeper. */
     reward?: bigint
-    /** True when this cycle halted the machine (the beneficiary is refunded). */
+    /**
+     * True when the machine is halted: this cycle halted it (the beneficiary
+     * is refunded), or the keeper found it halted. No later tick does work.
+     */
     halted?: boolean
     /** True when the keeper had to find the current machine again first. */
     resynced?: boolean
@@ -90,23 +93,68 @@ interface Current {
     vout: number
 }
 
+/** Result of a tick on a machine that is halted. */
+const HALTED: TickResult = { skipped: 'machine halted', halted: true }
+
 /** Most outputs the keeper follows forward in one resync. */
 const MAX_RESYNC_HOPS = 10_000
 
+/** Node reject texts that mean the machine input is spent or conflicts. */
+const CONFLICT_TEXTS = [
+    /txn-mempool-conflict/,
+    /missing inputs/i,
+    /inputs-spent/,
+    /missingorspent/,
+    /too-long-non-final-chain/,
+]
+
 /**
  * Tell if a broadcast error means the machine input is spent or conflicts.
- * Input: the error text. Output: true for "missing inputs",
- * "txn-mempool-conflict" or an HTTP 500 that names the inputs.
+ * Input: the error text. Output: true when it holds one of the known node
+ * reject texts: "txn-mempool-conflict", "missing inputs" (any case),
+ * "inputs-spent", "missingorspent" or "too-long-non-final-chain".
  */
 export function isConflictError(message: string): boolean {
-    if (/missing inputs|txn-mempool-conflict/i.test(message)) return true
-    return /\b500\b/.test(message) && /inputs?/i.test(message)
+    return CONFLICT_TEXTS.some((text) => text.test(message))
 }
 
 /**
- * Spends lookup through WhatsOnChain `/tx/<txid>/<vout>/spent`.
+ * Read one WhatsOnChain spends answer.
+ * Input: the URL, a fetch function and the HTTP codes that mean "no spend".
+ * Output: the spending txid, or undefined for a "no spend" code. Throws on
+ * any other HTTP error, and throws "spends lookup: unexpected response" for
+ * a 200 whose body has no 64-hex `txid`.
+ */
+async function wocSpend(
+    url: string,
+    fetchFn: FetchLike,
+    noSpend: number[]
+): Promise<string | undefined> {
+    const response = await fetchFn(url)
+    if (noSpend.includes(response.status)) return undefined
+    if (!response.ok)
+        throw new Error(`WhatsOnChain ${url} failed: HTTP ${response.status}`)
+    const body = (await response.json()) as { txid?: unknown } | null
+    const txid = body?.txid
+    if (typeof txid !== 'string' || !/^[0-9a-f]{64}$/.test(txid))
+        throw new Error('spends lookup: unexpected response')
+    return txid
+}
+
+/**
+ * Spends lookup through WhatsOnChain.
+ *
+ * First `GET /tx/<txid>/<vout>/spent`. Checked on testnet on 2026-10-19:
+ * a spent output gives HTTP 200 with
+ * `{"txid":"<spender txid>","vin":<input index>,"status":"confirmed"}`;
+ * an unspent output gives HTTP 404 "Not Found". When that finds nothing,
+ * the mempool variant `GET /tx/<txid>/<vout>/unconfirmed/spent` (same body,
+ * `"status":"unconfirmed"`) finds a rival spend that is not yet mined. That
+ * variant answered HTTP 400 for an output whose spend is already confirmed,
+ * so 400 and 404 both mean "no mempool spend" there.
  * Input: network, outpoint, fetch function. Output: the spending txid, or
- * undefined when WhatsOnChain answers 404 (unspent). Throws on other errors.
+ * undefined when neither lookup finds a spend. Throws on other HTTP errors
+ * and on a 200 with no 64-hex `txid`.
  */
 export async function wocSpentBy(
     network: 'testnet' | 'mainnet',
@@ -115,14 +163,11 @@ export async function wocSpentBy(
 ): Promise<string | undefined> {
     const base = `https://api.whatsonchain.com/v1/bsv/${
         network === 'testnet' ? 'test' : 'main'
-    }`
-    const url = `${base}/tx/${outpoint.txid}/${outpoint.vout}/spent`
-    const response = await fetchFn(url)
-    if (response.status === 404) return undefined
-    if (!response.ok)
-        throw new Error(`WhatsOnChain ${url} failed: HTTP ${response.status}`)
-    const body = (await response.json()) as { txid?: unknown }
-    return typeof body?.txid === 'string' ? body.txid : undefined
+    }/tx/${outpoint.txid}/${outpoint.vout}`
+    return (
+        (await wocSpend(`${base}/spent`, fetchFn, [404])) ??
+        (await wocSpend(`${base}/unconfirmed/spent`, fetchFn, [400, 404]))
+    )
 }
 
 /** Text of an unknown thrown value. */
@@ -136,6 +181,7 @@ export class Keeper {
     private readonly start: Outpoint
     private current?: Current
     private halted = false
+    private readonly cfg: GatewayConfig
     private readonly readChain: () => Promise<ChainInfo>
     private readonly spentBy: (
         outpoint: Outpoint
@@ -156,6 +202,7 @@ export class Keeper {
         if (!cfg.machineOutpoint)
             throw new Error('config: [machine] outpoint is required')
         this.start = parseOutpoint(cfg.machineOutpoint)
+        this.cfg = cfg
         this.readChain =
             options.chainInfo ?? (() => chainInfo(cfg.network, options.fetch))
         this.spentBy =
@@ -178,10 +225,25 @@ export class Keeper {
      * Run one cycle when one can run now.
      * Input: the wall clock (unix seconds) and optionally a signed input for
      * a program that waits for a witness.
-     * Output: the TickResult. Never throws for chain or broadcast errors.
+     * Output: the TickResult, with the config secrets hidden in `error`.
+     * Never throws for chain or broadcast errors.
      */
     async tick(now: number, input?: PendingInput): Promise<TickResult> {
-        if (this.halted) return { skipped: 'machine halted' }
+        const result = await this.tickOnce(now, input)
+        return result.error
+            ? { ...result, error: hideSecrets(result.error, this.cfg) }
+            : result
+    }
+
+    /**
+     * The work of `tick`, before the secrets are hidden.
+     * Input and output: as `tick`.
+     */
+    private async tickOnce(
+        now: number,
+        input?: PendingInput
+    ): Promise<TickResult> {
+        if (this.halted) return { ...HALTED }
         let mtp: number
         try {
             mtp = (await this.readChain()).mediantime
@@ -213,7 +275,7 @@ export class Keeper {
                 const found = await this.resync(current)
                 if (found === 'halted') {
                     this.halted = true
-                    return { mtp, skipped: 'machine halted', resynced: true }
+                    return { mtp, ...HALTED, resynced: true }
                 }
             } catch (e) {
                 return { mtp, error: `resync: ${messageOf(e)}` }
@@ -247,12 +309,13 @@ export class Keeper {
         mtp: number,
         input?: PendingInput
     ): Promise<{ result?: TickResult; broadcastError?: string }> {
-        let m: K17Machine
-        try {
-            m = K17Machine.fromTx(current.tx, current.vout) as K17Machine
-        } catch (e) {
-            return { result: { mtp, error: `not a machine: ${messageOf(e)}` } }
+        const output = current.tx.outputs[current.vout]
+        if (!output || !decodeMachine(output.script.toHex()).machine) {
+            // A spend that ended the machine leaves no machine at output 0.
+            this.halted = true
+            return { result: { mtp, ...HALTED } }
         }
+        const m = K17Machine.fromTx(current.tx, current.vout) as K17Machine
         const lockTime = Math.min(now, mtp - 1)
         if (BigInt(lockTime) < m.lastTime)
             return {
@@ -261,7 +324,7 @@ export class Keeper {
                     skipped: `waiting: median time past ${mtp} is not yet past lastTime ${m.lastTime}`,
                 },
             }
-        const value = BigInt(current.tx.outputs[current.vout].satoshis)
+        const value = BigInt(output.satoshis)
         let keeper: bsv.Address
         try {
             keeper = await this.signer.getDefaultAddress()
@@ -327,13 +390,20 @@ export class Keeper {
      * output 0.
      * Input: the output that the failed broadcast tried to spend.
      * Output: 'halted' when a spend ended the machine, else 'found' (the
-     * cached output is updated). Throws when a transaction cannot be read.
+     * cached output is updated). Throws "could not find the spending
+     * transaction" when the spends lookup fails, and throws when a
+     * transaction cannot be read.
      */
     private async resync(from: Current): Promise<'found' | 'halted'> {
         let op: Outpoint = { txid: from.tx.id, vout: from.vout }
         let tx = from.tx
         for (let hop = 0; hop < MAX_RESYNC_HOPS; hop++) {
-            const spender = await this.spentBy(op)
+            let spender: string | undefined
+            try {
+                spender = await this.spentBy(op)
+            } catch {
+                throw new Error('could not find the spending transaction')
+            }
             if (!spender) {
                 this.current = { tx, vout: op.vout }
                 return 'found'

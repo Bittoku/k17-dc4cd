@@ -16,6 +16,8 @@
 
 import {
     assemble,
+    HAS_OPERAND,
+    MNEMONIC,
     MEM_CELLS,
     OUT_MAX,
     ROSTER_BASE,
@@ -422,18 +424,22 @@ export function compileToHex(source: string): string {
 
 /**
  * Count the instructions in each cycle of a token list. A cycle ends at each
- * `YIELD` (the `YIELD` counts in the cycle it ends). Labels (`name:`) and the
- * numeric operands that follow `LIT`, `BOUNTY` and similar are not counted.
+ * `YIELD` (the `YIELD` counts in the cycle it ends). Labels (`name:`) are not
+ * counted, nor is the operand that follows a mnemonic with an operand
+ * (k17-vm `HAS_OPERAND`: the number after `LIT` or `BOUNTY`, the label after
+ * `IF`, the word name after `CALL`).
  * The first cycle starts at the program start; the last ends at the end of
  * the token list. Input: tokens from compile(). Output: one count per cycle.
  */
 export function cycleInstructionCounts(tokens: (string | number)[]): number[] {
     const counts: number[] = []
     let current = 0
-    for (const token of tokens) {
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i]
         if (typeof token !== 'string') continue
         if (token.endsWith(':')) continue
         current++
+        if (token in MNEMONIC && HAS_OPERAND.has(MNEMONIC[token])) i++
         if (token === 'YIELD') {
             counts.push(current)
             current = 0

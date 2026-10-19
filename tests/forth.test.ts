@@ -189,6 +189,14 @@ describe('forth compiler', () => {
             ).to.deep.equal([2, 3, 1])
         })
 
+        it('does not count IF labels or CALL word names as instructions', () => {
+            // main: LIT 1 IF L0 LIT 2 OUT L0: CALL twice YIELD | HALT | twice: LIT 3 OUT EXIT
+            const tokens = compile(
+                ': twice 3 out ; 1 if 2 out then twice yield'
+            ).tokens
+            expect(cycleInstructionCounts(tokens)).to.deep.equal([6, 4])
+        })
+
         it('gives a 4 instruction deployment cycle for the relay', () => {
             const counts = cycleInstructionCounts(
                 compile(

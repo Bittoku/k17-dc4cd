@@ -16,17 +16,30 @@
  *      Enrolment ends when the roster holds `slots` landowners or at
  *      `enrolDeadline`, whichever comes first, so a missing endorsement
  *      cannot stall the machine past the deadline.
- *   3. Rounds. Round r closes at start + (r + 1) * period. It opens with a
- *      cycle that zeroes the eight `delivered` cells. Then, until the round
- *      closes, each reading takes two cycles:
+ *   3. Rounds. Round r closes at close(r) = start + (r + 1) * period;
+ *      "closes" means the first cycle stamped (nLockTime) at or after
+ *      close(r) leaves the round. Round 0 runs from the end of enrolment
+ *      (which may be before `start`) to start + period; round r > 0 runs
+ *      from close(r - 1) to close(r). Each round opens with a cycle that
+ *      zeroes the eight `delivered` cells. Then, until the round closes,
+ *      each reading takes two cycles:
  *        attest cycle  IN slot, VERIFY slot != 0, VERIFY slot < count,
  *                      VERIFY not yet delivered this round, IN reading,
  *                      VERIFY the range, OUT, ATTEST under the slot's key;
  *        pay cycle     HALT if VALUE < floor, else PAYSLOT the bounty to
  *                      the slot and mark it delivered.
- *      Slots deliver in any order. The first cycle at or after the close
- *      leaves the round, so a missing signature cannot stall the machine.
- *   4. HALT after the last round: the remainder goes to the beneficiary.
+ *      Slots deliver in any order. Leaving at the close means a missing
+ *      signature cannot stall the machine.
+ *   4. HALT after the last round: the remainder goes to the beneficiary
+ *      (the sponsor's refund address).
+ *
+ * Rounds are unrolled: each round is its own code block with its close
+ * time and tag base as literals, so the program grows by about 200 bytes
+ * per round (about 52 KB at rounds = 256).
+ *
+ * VALUE pushes the UTXO value modulo 2^32, so a machine funded with 2^32
+ * satoshis or more would see a wrapped value in the floor check; fund it
+ * below 2^32 satoshis (about 42.9 BSV).
  *
  * Every cycle is at most 39 instructions, inside K = 40. The attest cycle
  * keeps the slot on the data stack for the pay cycle, because storing it in
@@ -39,7 +52,14 @@
  * messages also bind the machine's instance id.
  */
 
-import { CELL, MEM_CELLS, ROSTER_SLOTS, slotCells, withSlot } from 'k17-vm'
+import {
+    CELL,
+    MEM_CELLS,
+    OUT_MAX,
+    ROSTER_SLOTS,
+    slotCells,
+    withSlot,
+} from 'k17-vm'
 import { compileToHex } from '../forth/compiler'
 
 /** Deployment parameters of a consortium machine. */
@@ -71,12 +91,8 @@ export const CONSORTIUM_TAG_BASE = 0x30000000
 /** Namespace of consortium endorsement tags. */
 export const ENDORSE_TAG_BASE = 0x38000000
 
-/** Size of the output log in cells. */
-const OUTPUT_LOG_CELLS = 256
 /** Largest cell value. */
 const CELL_MAX = 0xffffffff
-/** Number of delivered cells, one per roster slot. */
-const DELIVERED_CELLS = 8
 
 /** True when `n` is an integer in [lo, hi]. */
 function inRange(n: number, lo: number, hi: number): boolean {
@@ -90,9 +106,9 @@ function inRange(n: number, lo: number, hi: number): boolean {
 function validate(opts: ConsortiumOptions): void {
     if (!inRange(opts.slots, 1, ROSTER_SLOTS - 1))
         throw new Error(`slots must be 1..${ROSTER_SLOTS - 1}`)
-    if (!inRange(opts.rounds, 1, OUTPUT_LOG_CELLS))
-        throw new Error(`rounds must be 1..${OUTPUT_LOG_CELLS}`)
-    if (opts.slots * opts.rounds > OUTPUT_LOG_CELLS)
+    if (!Number.isInteger(opts.rounds) || opts.rounds < 1)
+        throw new Error('rounds must be at least 1')
+    if (opts.slots * opts.rounds > OUT_MAX)
         throw new Error('slots*rounds exceeds the 256-cell output log')
     if (!inRange(opts.epoch, 0, 65535))
         throw new Error('epoch must be in [0, 65536)')
@@ -107,7 +123,7 @@ function validate(opts: ConsortiumOptions): void {
     if (!inRange(opts.bountyPerReading, 1, CELL_MAX))
         throw new Error('bountyPerReading must be at least 1 satoshi')
     if (!inRange(opts.floor, opts.bountyPerReading + 1, CELL_MAX))
-        throw new Error('floor must exceed bountyPerReading')
+        throw new Error('floor must exceed bountyPerReading and be below 2^32')
     if (!/^[0-9a-fA-F]{64}$/.test(opts.sponsorKeyHashHex))
         throw new Error('sponsorKeyHashHex must be 64 hex characters')
     if (opts.range) {
@@ -178,7 +194,7 @@ export function consortiumSource(opts: ConsortiumOptions): string {
     const { floor, bountyPerReading, enrolDeadline } = opts
     const full = opts.slots + 1
     const endorseBase = BigInt(ENDORSE_TAG_BASE) + BigInt(opts.epoch) * 16n
-    const deliveredNames = Array.from({ length: DELIVERED_CELLS }, (_, s) =>
+    const deliveredNames = Array.from({ length: ROSTER_SLOTS }, (_, s) =>
         s === 0 ? 'delivered-base' : `delivered-${s}`
     )
     const declarations = deliveredNames.map((n) => `variable ${n}`).join(' ')
@@ -213,7 +229,7 @@ ${rangeCheck}  dup out
   >r over r> swap attest  ( slot )
   yield
   \\ pay cycle
-  value ${floor} / 0= if halt then  \\ VALUE < floor: stop, remainder to the sponsor
+  value ${floor} / 0= if halt then  \\ VALUE < floor: stop, remainder to the beneficiary
   dup ${bountyPerReading} swap payslot  ( slot )
   1 swap delivered-base + !  \\ mark the slot delivered
 repeat

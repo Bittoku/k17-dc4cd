@@ -220,6 +220,9 @@ describe('consortium: generator', () => {
         expect(() =>
             consortiumSource({ ...OPTS, slots: 7, rounds: 37 })
         ).to.throw('slots*rounds exceeds the 256-cell output log')
+        expect(() =>
+            consortiumSource({ ...OPTS, slots: 1, rounds: 300 })
+        ).to.throw('slots*rounds exceeds the 256-cell output log')
     })
 
     it('refuses out-of-range options', () => {
@@ -232,6 +235,7 @@ describe('consortium: generator', () => {
             { period: 0 },
             { bountyPerReading: 0 },
             { floor: OPTS.bountyPerReading },
+            { floor: 2 ** 32 },
             { sponsorKeyHashHex: 'ab' },
             { range: { min: 10, max: 9 } },
             { start: 0xffffffff, enrolDeadline: 1 },
@@ -569,7 +573,7 @@ describe('consortium: on chain', function () {
         ])
     })
 
-    it('an endorsement signed for another machine instance is refused', async () => {
+    it('the planner refuses an endorsement signed for another machine instance', async () => {
         const m = await deploy(
             consortiumProgram(OPTS),
             undefined,

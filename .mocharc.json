@@ -1,6 +1,6 @@
 {
   "diff": true,
-  "require": "ts-node/register",
+  "require": ["ts-node/register", "./tests/utils/no-network.ts"],
   "extensions": ["ts"],
   "spec": ["./tests/**/*.test.ts"],
   "package": "./package.json",

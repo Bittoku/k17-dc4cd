@@ -34,7 +34,7 @@ import { Keeper, KeeperOptions, PendingInput } from '../chain/keeper'
 import { TxSource, parseOutpoint, walkHistory } from '../chain/history'
 import { DecodedMachine, decodeMachine } from '../chain/decode'
 import { tickLine } from '../cli/keeper'
-import { GatewayAttester } from './attester'
+import { GatewayAttester, checkInstance } from './attester'
 import { Bridge, openBridge } from './bridge'
 
 /** Default time between ticks with no reading, in milliseconds. */
@@ -131,6 +131,8 @@ export class Gateway {
     private readonly cfg: GatewayConfig
     private readonly once: boolean
     private pending?: Pending
+    /** A reading kept because the chain time could not be read. */
+    private unsigned?: number
     private readonly deliveredRounds = new Set<number>()
     private halted = false
     /** The latest machine outpoint, kept after a halt for the history walk. */
@@ -178,9 +180,12 @@ export class Gateway {
         return this.halted ? undefined : this.keeper.outpoint
     }
 
-    /** The reading that waits for an attest cycle, if any. */
+    /**
+     * The reading that waits: signed for an attest cycle, or kept unsigned
+     * until the chain time can be read. Undefined when none waits.
+     */
     get pendingReading(): number | undefined {
-        return this.pending?.reading
+        return this.pending?.reading ?? this.unsigned
     }
 
     /**
@@ -193,11 +198,20 @@ export class Gateway {
      */
     async handleReading(reading: number): Promise<string> {
         if (this.halted) return this.status(null, 'machine halted')
+        this.unsigned = undefined
         let chain: ChainNow
         try {
             chain = await this.keeper.chainTime(this.now())
         } catch (e) {
-            return this.status(UNKNOWN, `reading ${reading}: ${messageOf(e)}`)
+            // The round depends on the chain time: keep the reading and
+            // sign it on the next tick.
+            this.unsigned = reading
+            return this.status(
+                UNKNOWN,
+                `reading ${reading} kept, not signed yet (signs it on the next tick): ${messageOf(
+                    e
+                )}`
+            )
         }
         let round: number | null = this.attester.roundAt(chain.time)
         // Other processes move the machine on (the sponsor's endorsements,
@@ -225,6 +239,7 @@ export class Gateway {
         }
         if (machine) {
             try {
+                checkInstance(this.cfg.instanceId as string, machine.instanceId)
                 round = this.attester.currentRound(chain.time, machine)
                 if (round !== null && this.deliveredRounds.has(round))
                     return this.status(
@@ -244,11 +259,14 @@ export class Gateway {
     }
 
     /**
-     * Run one tick with the pending input, if any.
+     * Run one tick with the pending input, if any. A reading that was kept
+     * unsigned (the chain tip could not be read) is taken again first.
      * Output: the status line.
      */
     async tickIdle(): Promise<string> {
         if (this.halted) return this.status(null, 'machine halted')
+        if (this.unsigned !== undefined)
+            return this.handleReading(this.unsigned)
         let chain: ChainNow
         try {
             chain = await this.keeper.chainTime(this.now())
@@ -297,7 +315,10 @@ export class Gateway {
                 if (this.once) {
                     const deliveredBefore = this.deliveredRounds.size
                     // The interval timer ticks until the reading is settled.
-                    while (this.pending && !this.halted) {
+                    while (
+                        (this.pending || this.unsigned !== undefined) &&
+                        !this.halted
+                    ) {
                         await new Promise((r) => setTimeout(r, this.intervalMs))
                         await this.queue
                     }
@@ -416,14 +437,17 @@ export class Gateway {
 
     /**
      * Walk the machine's history and update the delivered count and the
-     * satoshis earned by this slot. A walk that fails leaves the old text.
+     * satoshis earned by this slot at this gateway's payout address. A walk that fails leaves the old text.
      * Output: none.
      */
     private async refreshTally(): Promise<void> {
         try {
             const cycles = await walkHistory(this.source, this.latest)
             const paid = cycles.filter(
-                (c) => c.payout?.slot === this.attester.slot
+                (c) =>
+                    c.payout?.slot === this.attester.slot &&
+                    c.payout.addressHex.toLowerCase() ===
+                        this.attester.payoutHex
             )
             const earned = paid.reduce((sum, c) => sum + c.payout!.satoshis, 0)
             this.tally = `delivered ${paid.length} earned ${earned} sats`

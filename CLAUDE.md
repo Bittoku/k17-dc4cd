@@ -25,7 +25,8 @@ held write-up belong here.
 
 - Commands: `inspect`, `deploy`, `endorse`, `keeper`, `gateway init|run` (see the README table and
   `docs/tutorial-dc4cd-gateway.md`). `main()` loads the K17Machine artifact for these commands.
-- Tests never use the network. Inject `provider`, `signer`, `keeper` (chain info, spends lookup)
+- Tests never use the network: the root hook `tests/utils/no-network.ts` (`.mocharc.json`
+  `require`) fails any test that calls a non-local host. Inject `provider`, `signer`, `keeper` (chain info, spends lookup)
   and `now` through each command's deps. Consortium fixtures live in
   `tests/utils/consortiumChain.ts`.
 - Lock time is always min(now, MTP - 1); never use the wall clock for a lock time.

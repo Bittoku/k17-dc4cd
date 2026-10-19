@@ -8,6 +8,8 @@
  *
  * - `slot not enrolled`: the machine's memory roster has no key in this
  *   slot, or a key that is not this attester's (Review Focus 5);
+ * - `slot payout is not this gateway's address`: the slot pays another
+ *   address than `[attester] payout_address` (else the wallet address);
  * - `round closed`: the chain time (the nLockTime the keeper will stamp,
  *   min(now, MTP - 1)) is at or after start + rounds * period, the close
  *   of the last round, so no round is open (Review Focus 1);
@@ -20,7 +22,8 @@
  */
 
 import { RabinPubKey } from 'scrypt-ts-lib'
-import { Attester, keyHash, readSlot, signReadingFor } from 'k17-vm'
+import { bsv } from 'scrypt-ts'
+import { Attester, keyHash, payoutOf, readSlot, signReadingFor } from 'k17-vm'
 import { ConsortiumSettings, GatewayConfig } from '../chain/config'
 import { PendingInput } from '../chain/keeper'
 import { ConsortiumOptions, readingTag } from '../programs/consortium'
@@ -32,6 +35,38 @@ const CELL_MAX = 0xffffffff
 export interface MachineMemory {
     /** Memory image, hex. */
     mem: string
+}
+
+/**
+ * The payout address of a gateway.
+ * Input: the configuration. Output: `[attester] payout_address`, else the
+ * address of the wallet key on the config's network. Throws "config:
+ * [wallet] wif is not a valid key" (never the key) when the key is bad.
+ */
+export function payoutAddressOf(cfg: GatewayConfig): bsv.Address {
+    if (cfg.payoutAddress) return bsv.Address.fromString(cfg.payoutAddress)
+    try {
+        return bsv.PrivateKey.fromWIF(cfg.wif).toAddress(
+            cfg.network === 'mainnet'
+                ? bsv.Networks.mainnet
+                : bsv.Networks.testnet
+        )
+    } catch {
+        throw new Error('config: [wallet] wif is not a valid key')
+    }
+}
+
+/**
+ * Check that a machine is the one a configuration names.
+ * Input: the configured instance id (64 hex) and the machine's instance id.
+ * Output: none. Throws "config [machine] instance_id is not the instance id
+ * of the machine" when they differ (case is ignored).
+ */
+export function checkInstance(configured: string, actual: string): void {
+    if (configured.toLowerCase() !== actual.toLowerCase())
+        throw new Error(
+            'config [machine] instance_id is not the instance id of the machine'
+        )
 }
 
 /**
@@ -91,6 +126,8 @@ export class GatewayAttester {
     readonly keyHashHex: string
     /** Roster slot of this gateway. */
     readonly slot: number
+    /** 20-byte payout hash of this gateway (`payoutAddressOf`), 40 hex. */
+    readonly payoutHex: string
     /** The Rabin key; private. */
     private readonly attester: Attester
     private readonly settings: ConsortiumSettings
@@ -116,6 +153,7 @@ export class GatewayAttester {
         if (!cfg.consortium)
             throw new Error('config: the [consortium] table is required')
         this.slot = cfg.slot
+        this.payoutHex = payoutOf(payoutAddressOf(cfg)).toLowerCase()
         this.instanceId = cfg.instanceId.toLowerCase()
         this.settings = cfg.consortium
         this.options = tagOptions(cfg.consortium)
@@ -135,7 +173,9 @@ export class GatewayAttester {
      * not the wall clock) and the machine's memory.
      * Output: as `roundAt`. Throws
      * Error('slot not enrolled') when the slot is outside 1..slots, empty,
-     * or holds a key hash that is not this attester's.
+     * or holds a key hash that is not this attester's, and Error("slot
+     * payout is not this gateway's address") when the slot pays another
+     * address than `payoutAddressOf(cfg)`.
      */
     currentRound(now: number, machine: MachineMemory): number | null {
         if (this.slot < 1 || this.slot > this.settings.slots)
@@ -143,6 +183,8 @@ export class GatewayAttester {
         const roster = readSlot(machine.mem, this.slot)
         if (roster.empty || roster.hashHex.toLowerCase() !== this.keyHashHex)
             throw new Error('slot not enrolled')
+        if (roster.payoutHex.toLowerCase() !== this.payoutHex)
+            throw new Error("slot payout is not this gateway's address")
         return this.roundAt(now)
     }
 

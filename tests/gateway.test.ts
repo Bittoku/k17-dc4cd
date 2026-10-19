@@ -21,14 +21,17 @@ import {
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { PassThrough, Readable } from 'stream'
-import { TestWallet } from 'scrypt-ts'
+import { TestWallet, bsv } from 'scrypt-ts'
 import { Rabin } from 'rabinsig'
 import {
     K17Machine,
     RABIN_SECURITY_LEVEL,
     attestMessageFor,
     keyHash,
+    payoutOf,
     signReadingFor,
+    slotCells,
+    withSlot,
 } from 'k17-vm'
 import { ConsortiumOptions, consortiumMemory, readingTag } from '../src'
 import { loadConfig } from '../src/chain/config'
@@ -151,6 +154,30 @@ describe('gateway: attester', () => {
         expect(() =>
             outside.currentRound(OPTS.start, memWithSlot1(landowner.pub))
         ).to.throw('slot not enrolled')
+    })
+
+    it("refuses a slot whose payout is not this gateway's address", () => {
+        const other = bsv.PrivateKey.fromRandom('testnet').toAddress()
+        const mem = {
+            mem: withSlot(
+                consortiumMemory(OPTS),
+                1,
+                slotCells(keyHash(landowner.pub), payoutOf(other))
+            ),
+        }
+        expect(() => attester.currentRound(OPTS.start, mem)).to.throw(
+            "slot payout is not this gateway's address"
+        )
+        // Without [attester] payout_address the wallet address is the payout.
+        const walletPaid = new GatewayAttester(
+            gatewayConfig({ payoutAddress: undefined })
+        )
+        expect(walletPaid.payoutHex).to.equal(
+            payoutOf(WALLET_KEY.toAddress('testnet'))
+        )
+        expect(() =>
+            walletPaid.currentRound(OPTS.start, memWithSlot1(landowner.pub))
+        ).to.throw("slot payout is not this gateway's address")
     })
 
     it('refuses a reading out of range unless sign_anyway', () => {
@@ -310,6 +337,22 @@ describe('gateway: run loop', function () {
         expect(chain.cycleBroadcasts).to.equal(before)
     })
 
+    it('refuses a reading when the config names another instance id, and broadcasts nothing', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(true)
+        const before = chain.cycleBroadcasts
+        const gateway = new Gateway(
+            { ...cfg, instanceId: 'c1'.repeat(32) },
+            chain,
+            signer,
+            { keeper: keeperOptions(chain), now: () => OPTS.start + 100 }
+        )
+        const line = await gateway.handleReading(5231)
+        expect(line).to.contain(
+            'config [machine] instance_id is not the instance id of the machine'
+        )
+        expect(chain.cycleBroadcasts).to.equal(before)
+    })
+
     it('refuses a reading out of range and broadcasts nothing', async () => {
         const { chain, signer, cfg } = await consortiumOnChain(true)
         const before = chain.cycleBroadcasts
@@ -384,6 +427,27 @@ describe('gateway: chain time and pending readings', function () {
         const duplicate = await gateway.handleReading(5300)
         expect(duplicate).to.contain('slot already delivered in round 0')
         expect(chain.cycleBroadcasts).to.equal(before)
+        expect(gateway.pendingReading).to.equal(undefined)
+    })
+
+    it('keeps a reading when the chain tip cannot be read, and signs it on the next tick', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(true)
+        const tip: ChainTip = { mtp: T0 + 1_000_000, fail: 'tip unreachable' }
+        const gateway = new Gateway(cfg, chain, signer, {
+            keeper: keeperOptions(chain, tip),
+            now: () => OPTS.start + 100,
+        })
+        const before = chain.cycleBroadcasts
+        const kept = await gateway.handleReading(5231)
+        expect(kept).to.contain(
+            'reading 5231 kept, not signed yet (signs it on the next tick)'
+        )
+        expect(kept).to.contain('tip unreachable')
+        expect(gateway.pendingReading).to.equal(5231)
+        expect(chain.cycleBroadcasts).to.equal(before)
+        tip.fail = undefined
+        await tickUntil(gateway, /delivered 1 earned 150 sats/)
+        expect(outLogOf(chain, gateway)).to.deep.equal([5231n])
         expect(gateway.pendingReading).to.equal(undefined)
     })
 

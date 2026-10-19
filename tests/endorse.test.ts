@@ -179,6 +179,28 @@ describe('k17forth endorse', function () {
         expectNoSponsorSecret(lines)
     })
 
+    it('refuses a config whose instance_id is not the machine, before any broadcast', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(false)
+        const config = sponsorConfig('other-instance.toml', {
+            ...cfg,
+            instanceId: 'c1'.repeat(32),
+        })
+        const before = chain.cycleBroadcasts
+        const { lines, io } = sink()
+        const code = await endorseCommand(endorseArgs(config), io, {
+            provider: chain,
+            signer,
+            keeper: keeperOptions(chain),
+            now: () => OPTS.start - 100,
+        })
+        expect(code).to.equal(1)
+        expect(lines.join('\n')).to.contain(
+            'config [machine] instance_id is not the instance id of the machine'
+        )
+        expect(chain.cycleBroadcasts).to.equal(before)
+        expectNoSponsorSecret(lines)
+    })
+
     it('refuses mainnet without --i-know-this-spends-real-money', async () => {
         const { chain, cfg } = await consortiumOnChain(false)
         const config = sponsorConfig('main.toml', cfg, sponsor, 'mainnet')

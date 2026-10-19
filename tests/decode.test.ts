@@ -27,6 +27,7 @@ import { loadConfig, describeConfig } from '../src/chain/config'
 import { addressBalance, chainInfo } from '../src/chain/provider'
 import { inspectCommand } from '../src/cli/inspect'
 import { main } from '../src/cli/k17forth'
+import { loadK17Artifact } from '../src/chain/artifact'
 
 const ECON = {
     beneficiary: addrOf(bsv.PrivateKey.fromRandom('testnet').toAddress()),
@@ -167,9 +168,7 @@ function realChain(): Promise<RealChain> {
 describe('chain layer', function () {
     this.timeout(60000)
     before(async () => {
-        await K17Machine.loadArtifact(
-            require('k17-vm/artifacts/k17Machine.json')
-        )
+        loadK17Artifact()
     })
 
     describe('decodeMachine', () => {

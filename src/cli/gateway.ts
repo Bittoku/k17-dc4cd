@@ -19,10 +19,8 @@
  */
 
 import type { Provider, Signer } from 'scrypt-ts'
-import { bsv } from 'scrypt-ts'
 import { Attester, keyHash, newAttester, payoutOf, pubKeyBytes } from 'k17-vm'
 import {
-    GatewayConfig,
     describeConfig,
     hideSecrets,
     loadConfig,
@@ -31,6 +29,7 @@ import {
 import { KeeperOptions } from '../chain/keeper'
 import { makeProvider, makeSigner } from '../chain/provider'
 import { Gateway } from '../gateway/gateway'
+import { payoutAddressOf } from '../gateway/attester'
 import { parseFlags } from './flags'
 import type { CliIo } from './k17forth'
 
@@ -77,25 +76,6 @@ export async function gatewayCommand(
 }
 
 /**
- * The payout address of a gateway.
- * Input: the configuration. Output: `[attester] payout_address`, else the
- * address of the wallet key on the config's network. Throws "config:
- * [wallet] wif is not a valid key" (never the key) when the key is bad.
- */
-function payoutAddress(cfg: GatewayConfig): bsv.Address {
-    if (cfg.payoutAddress) return bsv.Address.fromString(cfg.payoutAddress)
-    try {
-        return bsv.PrivateKey.fromWIF(cfg.wif).toAddress(
-            cfg.network === 'mainnet'
-                ? bsv.Networks.mainnet
-                : bsv.Networks.testnet
-        )
-    } catch {
-        throw new Error('config: [wallet] wif is not a valid key')
-    }
-}
-
-/**
  * `gateway init`: make and save the attester key, print the public parts.
  * Input and output: as `gatewayCommand`.
  */
@@ -123,7 +103,7 @@ async function initCommand(
             throw new Error(
                 `config: ${config} already has an [attester] key; remove rabin_p and rabin_q to make a new one`
             )
-        const payout = payoutAddress(cfg)
+        const payout = payoutAddressOf(cfg)
         io.out('gateway: making a Rabin key (this takes some seconds)')
         const attester = (deps.generate ?? (() => newAttester()))()
         const { p, q } = attester.priv

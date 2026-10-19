@@ -1,0 +1,8 @@
+node_modules/
+dist/
+artifacts/
+spikes/
+.omc/
+.superpowers/
+# held write-up: not reformatted
+docs/euroforth-writeup-draft.md

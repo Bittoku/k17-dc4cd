@@ -4,7 +4,8 @@
  * `endorse --config <sponsor.toml> --member <public key hex> --payout
  * <address> --slot <n>` loads the sponsor's configuration, whose
  * `[attester]` key is the sponsor's Rabin key. It refuses, before any
- * broadcast, a key whose hash is not in roster slot 0 of the machine. It
+ * broadcast, a config whose `[machine] instance_id` is not the instance id
+ * of the machine, and a key whose hash is not in roster slot 0. It
  * signs the endorsement of the member key and payout into the slot under
  * `endorseTag(slot)` of `[consortium]` (`signEndorsement`, bound to the
  * machine's instance id), and relays it with `Keeper.tick` (lock time
@@ -37,7 +38,7 @@ import { Keeper, KeeperOptions, PendingInput } from '../chain/keeper'
 import { parseOutpoint } from '../chain/history'
 import { decodeMachine } from '../chain/decode'
 import { makeProvider, makeSigner } from '../chain/provider'
-import { rabinKeyOf, tagOptions } from '../gateway/attester'
+import { checkInstance, rabinKeyOf, tagOptions } from '../gateway/attester'
 import { endorseTag } from '../programs/consortium'
 import { tickLine } from './keeper'
 import { parseFlags } from './flags'
@@ -172,6 +173,7 @@ export async function endorseCommand(
         const machine = output && decodeMachine(output.script.toHex()).machine
         if (!machine)
             throw new Error(`${cfg.machineOutpoint} is not a K17 machine`)
+        checkInstance(cfg.instanceId, machine.instanceId)
         if (readSlot(machine.mem, 0).hashHex !== keyHash(sponsor.pub))
             throw new Error(
                 'the [attester] key is not the sponsor of this machine (roster slot 0 holds another key hash)'

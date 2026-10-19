@@ -14,7 +14,7 @@ state when interpreted. Messages are code; routing is in the program.
 
 Two K17 machines, A and B, each a UTXO. One transaction spends both. A's program
 writes a cell to its output log; B's program reads the same cell as a witness. For
-this to be a *message* rather than two unrelated witnesses, both covenants must
+this to be a _message_ rather than two unrelated witnesses, both covenants must
 constrain the same bytes.
 
 The cheap carrier is a third, tiny output in the same transaction: an
@@ -32,7 +32,7 @@ No new opcode is needed. The message is atomic (same transaction), authenticated
 ## Why it is blocked
 
 1. **`SIGHASH_ALL` commits to every output.** To check `hashOutputs`, each machine
-   must be handed the full serialised outputs, including the *other* machine's new
+   must be handed the full serialised outputs, including the _other_ machine's new
    locking script. At 202 KB per interpreter (K=40, 32 handlers), the unlocking
    script of each input carries the other's 202 KB, so the transaction roughly
    triples in size.
@@ -42,8 +42,8 @@ No new opcode is needed. The message is atomic (same transaction), authenticated
 3. **`SIGHASH_ALL | ANYONECANPAY`** commits to all outputs but only this input; it
    does not help with (1) and weakens the input-0 uniqueness check.
 4. **The input-0 rule.** The output-sharing defence requires the machine at input
-   index 0. Two machines in one transaction need "machine at input *i* with its
-   state output at output *i*", and the defence has to be re-argued: two machines
+   index 0. Two machines in one transaction need "machine at input _i_ with its
+   state output at output _i_", and the defence has to be re-argued: two machines
    with identical scripts and values spent together must still each get their
    own state output.
 

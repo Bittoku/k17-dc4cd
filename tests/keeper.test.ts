@@ -37,6 +37,7 @@ import {
     makeProvider,
     retryOn429,
     withRetry,
+    withTimeout,
     wocUnspent,
 } from '../src/chain/provider'
 import { deployCommand } from '../src/cli/deploy'
@@ -422,6 +423,22 @@ describe('keeper helpers', () => {
         }
         expect(message).to.equal('Not Found')
         expect(reads).to.equal(2)
+    })
+
+    it('rejects a WhatsOnChain call that never answers, and aborts it', async () => {
+        let signal: AbortSignal | undefined
+        const hung = withTimeout((_url, init) => {
+            signal = init?.signal
+            return new Promise(() => undefined) // never settles
+        }, 20)
+        let message = ''
+        try {
+            await hung('https://x/chain/info')
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.equal('https://x/chain/info timed out after 20 ms')
+        expect(signal?.aborted).to.equal(true)
     })
 
     it('retries a WhatsOnChain call that is rate limited (HTTP 429)', async () => {

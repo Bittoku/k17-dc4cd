@@ -17,7 +17,7 @@
  *
  * WhatsOnChain also limits the call rate (HTTP 429 "Too Many Requests") and
  * answers "Not Found" for a transaction for some seconds after its
- * broadcast. `wocFetch` retries a 429, and the provider retries
+ * broadcast. `wocFetch` limits each call to 15 s and retries a 429, and the provider retries
  * `getTransaction` and `sendRawTransaction` on these transient errors.
  */
 
@@ -32,7 +32,10 @@ import {
 import type { GatewayConfig, NetworkName } from './config'
 
 /** The part of `fetch` that these helpers use; tests pass a fake. */
-export type FetchLike = (url: string) => Promise<{
+export type FetchLike = (
+    url: string,
+    init?: { signal?: AbortSignal }
+) => Promise<{
     ok: boolean
     status: number
     json: () => Promise<unknown>
@@ -72,8 +75,49 @@ export function retryOn429(
     }
 }
 
-/** The default fetch of the WhatsOnChain helpers: `fetch` with 429 retries. */
-export const wocFetch: FetchLike = retryOn429(fetch as unknown as FetchLike)
+/** Longest wait for one WhatsOnChain call, in ms. */
+export const WOC_TIMEOUT_MS = 15_000
+
+/**
+ * Wrap a fetch function so that one call cannot wait for ever.
+ * Input: the fetch function and the time limit in ms (default
+ * WOC_TIMEOUT_MS). Output: a fetch function that aborts the call (through
+ * an AbortController signal) and rejects with "<url> timed out after <n>
+ * ms" when no answer comes in time. It rejects even when the wrapped
+ * function ignores the signal, so a hung call cannot block a gateway or
+ * keeper loop.
+ */
+export function withTimeout(
+    fetchFn: FetchLike,
+    ms = WOC_TIMEOUT_MS
+): FetchLike {
+    return async (url) => {
+        const controller = new AbortController()
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+                controller.abort()
+                reject(new Error(`${url} timed out after ${ms} ms`))
+            }, ms)
+        })
+        try {
+            return await Promise.race([
+                fetchFn(url, { signal: controller.signal }),
+                timeout,
+            ])
+        } finally {
+            clearTimeout(timer)
+        }
+    }
+}
+
+/**
+ * The default fetch of the WhatsOnChain helpers: `fetch` with a time limit
+ * per call (`withTimeout`) and 429 retries (`retryOn429`).
+ */
+export const wocFetch: FetchLike = retryOn429(
+    withTimeout(fetch as unknown as FetchLike)
+)
 
 /**
  * Run a call again while it fails with a transient error.
@@ -126,14 +170,21 @@ function wocBase(network: NetworkName | Provider): string {
 
 /**
  * Get JSON from WhatsOnChain.
- * Input: full URL and a fetch function. Output: the parsed body. Throws with
- * the HTTP status when the call fails.
+ * Input: full URL and a fetch function. Output: the parsed body as an
+ * object of named fields, or null when the body is not an object. Throws
+ * with the HTTP status when the call fails.
  */
-async function wocJson(url: string, fetchFn: FetchLike): Promise<any> {
+async function wocJson(
+    url: string,
+    fetchFn: FetchLike
+): Promise<Record<string, unknown> | null> {
     const response = await fetchFn(url)
     if (!response.ok)
         throw new Error(`WhatsOnChain ${url} failed: HTTP ${response.status}`)
-    return response.json()
+    const body = await response.json()
+    return body && typeof body === 'object'
+        ? (body as Record<string, unknown>)
+        : null
 }
 
 /** One coin of a WhatsOnChain confirmed or unconfirmed unspent answer. */

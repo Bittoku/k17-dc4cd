@@ -13,18 +13,18 @@ trail — at the price of block latency and transaction fees.
 
 ## Contents
 
-| Path | What |
-|---|---|
-| `src/forth/` | A Forth-subset compiler to K17 bytecode (`compile`, `compileToHex`, CLI). Colon definitions, variables, constants, `if/else/then`, `begin/until/again/while/repeat`, and the K17 primitives including `sigverify`, `bounty`, `min`, `max`, `/`. |
-| `src/programs/relay.ts` | DC4CD §5.1: roster-attested aggregation relay. Each hop's reading must be Rabin-signed by that hop's roster member; any keeper may relay it and is paid a bounty. Output log at HALT: `[hops, sum, average, min, max]`. |
-| `src/programs/fuzzy.ts` | DC4CD §5.2: distributed fuzzy fire detection as a demo. Attested packed opinions, fuzzy AND/OR with `min`/`max`, threshold, alarm bounty. |
-| `examples/*.fs` | The generated Forth source of both programs, for `npm run forth`. |
-| `src/gateway/` | The gateway (`k17forth gateway init` / `run`): reads `R <reading>` lines from a bridge mote, signs each reading for its consortium slot and round, and relays it through the keeper. It refuses a closed round, a slot that is not enrolled, and a reading out of range. |
-| `docs/tutorial-dc4cd-gateway.md` | Tutorial: a sponsor and three landowners on testnet, from `gateway init` to `inspect --history`, with a worked example. |
-| `docs/bridge-mote.fs` | DC4CD words for the bridge mote (`>gateway`, `report`) and the `tell:` line that makes nodes report one time in each period. |
-| `docs/inter-machine-tell.md` | Design note for two machines messaging in one transaction (DC4CD's nested `tell:`). Parked: blocked on interpreter size. |
-| `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the K17 defensive publication is public. |
-| `tests/` | Reference-VM and on-chain tests. Every on-chain cycle is verified with the bundled Bitcoin script interpreter. |
+| Path                              | What                                                                                                                                                                                                                                                                     |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/forth/`                      | A Forth-subset compiler to K17 bytecode (`compile`, `compileToHex`, CLI). Colon definitions, variables, constants, `if/else/then`, `begin/until/again/while/repeat`, and the K17 primitives including `sigverify`, `bounty`, `min`, `max`, `/`.                          |
+| `src/programs/relay.ts`           | DC4CD §5.1: roster-attested aggregation relay. Each hop's reading must be Rabin-signed by that hop's roster member; any keeper may relay it and is paid a bounty. Output log at HALT: `[hops, sum, average, min, max]`.                                                  |
+| `src/programs/fuzzy.ts`           | DC4CD §5.2: distributed fuzzy fire detection as a demo. Attested packed opinions, fuzzy AND/OR with `min`/`max`, threshold, alarm bounty.                                                                                                                                |
+| `examples/*.fs`                   | The generated Forth source of both programs, for `npm run forth`.                                                                                                                                                                                                        |
+| `src/gateway/`                    | The gateway (`k17forth gateway init` / `run`): reads `R <reading>` lines from a bridge mote, signs each reading for its consortium slot and round, and relays it through the keeper. It refuses a closed round, a slot that is not enrolled, and a reading out of range. |
+| `docs/tutorial-dc4cd-gateway.md`  | Tutorial: a sponsor and three landowners on testnet, from `gateway init` to `inspect --history`, with a worked example.                                                                                                                                                  |
+| `docs/bridge-mote.fs`             | DC4CD words for the bridge mote (`>gateway`, `report`) and the `tell:` line that makes nodes report one time in each period.                                                                                                                                             |
+| `docs/inter-machine-tell.md`      | Design note for two machines messaging in one transaction (DC4CD's nested `tell:`). Parked: blocked on interpreter size.                                                                                                                                                 |
+| `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the K17 defensive publication is public.                                                                                                                                                                                       |
+| `tests/`                          | Reference-VM and on-chain tests. Every on-chain cycle is verified with the bundled Bitcoin script interpreter.                                                                                                                                                           |
 
 ## Run
 
@@ -41,17 +41,17 @@ npm run forth examples/relay.fs
 
 `npm run k17forth -- <command>` runs the tool from the source.
 
-| Command | What it does |
-|---|---|
-| `compile <file.fs>` | Prints the hex, the disassembly and the instructions per cycle. |
-| `run <file.fs> --scenario <file.json>` | Runs a program on the reference VM, one cycle per scenario entry. |
-| `repl [file.fs]` | Runs Forth one line at a time and shows the machine. |
-| `inspect <txid[:vout]> [--history]` | Shows a machine on the chain and, with `--history`, each cycle back to the deployment. |
-| `deploy <file.fs> --config <toml> ...` | Deploys a machine and writes its outpoint into the config. |
-| `endorse --config <sponsor.toml> --member <key> --payout <addr> --slot <n>` | The sponsor enrols a landowner key into a roster slot. |
-| `keeper --config <toml>` | Advances the machine, one cycle per tick, until it stops. |
-| `gateway init --config <toml>` | Makes the Rabin key of a landowner and prints what the sponsor needs. |
-| `gateway run --config <toml> [--once]` | Signs the bridge readings and relays them. With `--once` it stops after one reading: exit code 0 when the machine paid it, 3 when it was refused or rejected. |
+| Command                                                                     | What it does                                                                                                                                                  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compile <file.fs>`                                                         | Prints the hex, the disassembly and the instructions per cycle.                                                                                               |
+| `run <file.fs> --scenario <file.json>`                                      | Runs a program on the reference VM, one cycle per scenario entry.                                                                                             |
+| `repl [file.fs]`                                                            | Runs Forth one line at a time and shows the machine.                                                                                                          |
+| `inspect <txid[:vout]> [--history]`                                         | Shows a machine on the chain and, with `--history`, each cycle back to the deployment.                                                                        |
+| `deploy <file.fs> --config <toml> ...`                                      | Deploys a machine and writes its outpoint into the config.                                                                                                    |
+| `endorse --config <sponsor.toml> --member <key> --payout <addr> --slot <n>` | The sponsor enrols a landowner key into a roster slot.                                                                                                        |
+| `keeper --config <toml>`                                                    | Advances the machine, one cycle per tick, until it stops.                                                                                                     |
+| `gateway init --config <toml>`                                              | Makes the Rabin key of a landowner and prints what the sponsor needs.                                                                                         |
+| `gateway run --config <toml> [--once]`                                      | Signs the bridge readings and relays them. With `--once` it stops after one reading: exit code 0 when the machine paid it, 3 when it was refused or rejected. |
 
 Each command that spends money refuses mainnet without `--i-know-this-spends-real-money`. No command prints the wallet key or a Rabin prime.
 

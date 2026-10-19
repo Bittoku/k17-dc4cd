@@ -20,6 +20,8 @@ You add one gateway for each landowner. A gateway is a computer that has a seria
 
 The sponsor deploys the machine, enrols the landowners and funds the payments. Each person has a TOML config file for the `k17forth` tool. A config file holds secrets: the wallet key and the Rabin key. The tool refuses a config file that other users can read. Give each config file mode 600.
 
+Keep each config file outside the repository, or in the `gateways/` folder. Git ignores `*.toml` files and `gateways/` in this repository, so a config file does not go into a commit.
+
 A minimum config file for a landowner:
 
 ```toml
@@ -212,6 +214,8 @@ A landowner earns nothing in these cases:
 - The reading is out of range. The gateway refuses to sign it. With `[gateway] sign_anyway = true` the gateway signs it, but the machine rejects it.
 
 - The slot is not enrolled yet. The gateway refuses the reading with "slot not enrolled".
+
+- The sponsor enrolled the slot with another payout address. The gateway refuses the reading with "slot payout is not this gateway's address". Ask the sponsor to enrol the address that `gateway init` printed.
 
 - The last round closed. After that, the gateway refuses each reading.
 

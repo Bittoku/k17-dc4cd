@@ -80,12 +80,20 @@ function p2pkhHash(scriptHex: string): string | undefined {
     return /^76a914([0-9a-f]{40})88ac$/.exec(scriptHex)?.[1]
 }
 
+/** The parts of a bsv script chunk that the replay reads. */
+interface ScriptChunk {
+    /** Pushed data, when the chunk is a data push. */
+    buf?: Uint8Array
+    /** Opcode of the chunk. */
+    opcodenum: number
+}
+
 /**
  * Bytes of one script push, as hex.
  * Input: a script chunk. Output: its data; empty for OP_0; one byte for the
  * small-number opcodes OP_1NEGATE and OP_1..OP_16.
  */
-function chunkHex(chunk: any): string {
+function chunkHex(chunk: ScriptChunk): string {
     if (chunk.buf) return Buffer.from(chunk.buf).toString('hex')
     const op: number = chunk.opcodenum
     if (op === 0x4f) return '81'
@@ -98,7 +106,7 @@ function chunkHex(chunk: any): string {
  * Number of one script push (script number: little endian, sign in the top bit).
  * Input: a script chunk. Output: the value; 0 for OP_0.
  */
-function chunkNumber(chunk: any): bigint {
+function chunkNumber(chunk: ScriptChunk): bigint {
     const bytes = Buffer.from(chunkHex(chunk), 'hex')
     if (bytes.length === 0) return 0n
     let magnitude = 0n

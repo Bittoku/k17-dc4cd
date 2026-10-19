@@ -11,7 +11,7 @@
  *
  * `gateway run --config <gw.toml> [--interval <seconds>]` runs a `Gateway`
  * on the bridge (`[bridge] serial`, else standard input) until the bridge
- * ends or the machine halts. A mainnet config needs
+ * ends or the machine halts; a bridge error ends it with exit code 1. A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
 
@@ -57,8 +57,9 @@ export interface GatewayCommandDeps {
 /**
  * Run a gateway sub-command.
  * Input: arguments after `gateway`, an output sink and optional test parts.
- * Output: exit code: 0 on success, 1 when the config cannot be used, 2 on
- * wrong arguments (or a mainnet config without the switch).
+ * Output: exit code: 0 on success, 1 when the config cannot be used or the
+ * bridge failed, 2 on wrong arguments (or a mainnet config without the
+ * switch).
  */
 export async function gatewayCommand(
     args: string[],
@@ -208,6 +209,5 @@ async function runGateway(
         io.err(hide((e as Error).message))
         return 1
     }
-    await gateway.run()
-    return 0
+    return gateway.run()
 }

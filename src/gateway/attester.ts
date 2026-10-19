@@ -8,8 +8,9 @@
  *
  * - `slot not enrolled`: the machine's memory roster has no key in this
  *   slot, or a key that is not this attester's (Review Focus 5);
- * - `round closed`: the clock is outside [start, start + rounds * period),
- *   so no round is open (Review Focus 1);
+ * - `round closed`: the chain time (the nLockTime the keeper will stamp,
+ *   min(now, MTP - 1)) is at or after start + rounds * period, the close
+ *   of the last round, so no round is open (Review Focus 1);
  * - `reading out of range`: the reading is outside `[consortium]
  *   range_min..range_max`, unless `[gateway] sign_anyway` is true. A value
  *   that is not a 32-bit cell is always refused.
@@ -120,10 +121,10 @@ export class GatewayAttester {
     }
 
     /**
-     * The round that is open at a time, after the enrolment check.
-     * Input: the clock (unix seconds) and the machine's memory.
-     * Output: r when start + r * period <= now < start + (r + 1) * period
-     * and r < rounds; null when no round is open. Throws
+     * The round that is open at a chain time, after the enrolment check.
+     * Input: the chain time (unix seconds; the nLockTime of the next cycle,
+     * not the wall clock) and the machine's memory.
+     * Output: as `roundAt`. Throws
      * Error('slot not enrolled') when the slot is outside 1..slots, empty,
      * or holds a key hash that is not this attester's.
      */
@@ -137,14 +138,17 @@ export class GatewayAttester {
     }
 
     /**
-     * The round that is open at a time, from the clock alone.
-     * Input: the clock (unix seconds). Output: as `currentRound`, without
-     * the enrolment check.
+     * The round that is open at a chain time, from the time alone.
+     * Input: the chain time t (unix seconds). Output: 0 when t is before
+     * start + period (the machine opens round 0 when enrolment ends, which
+     * can be before start); r when start + r * period <= t <
+     * start + (r + 1) * period and r < rounds; null at or after the close
+     * of the last round.
      */
-    roundAt(now: number): number | null {
+    roundAt(t: number): number | null {
         const { start, period, rounds } = this.settings
-        if (now < start) return null
-        const round = Math.floor((now - start) / period)
+        if (t < start) return 0
+        const round = Math.floor((t - start) / period)
         return round < rounds ? round : null
     }
 

@@ -23,7 +23,15 @@
 
 import { Provider, Signer, bsv, toByteString } from 'scrypt-ts'
 import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
-import { K17Machine, NO_SIG, addrOf, bindCycleBuilder, planCycle } from 'k17-vm'
+import {
+    K17Machine,
+    NO_SIG,
+    addrOf,
+    bindCycleBuilder,
+    outputLog,
+    planCycle,
+    stateOf,
+} from 'k17-vm'
 import { GatewayConfig, hideSecrets } from './config'
 import { ChainInfo, FetchLike, chainInfo } from './provider'
 import { Outpoint, parseOutpoint } from './history'
@@ -58,6 +66,11 @@ export interface TickResult {
     mtp?: number
     /** Satoshis paid to the keeper. */
     reward?: bigint
+    /**
+     * Cells that this cycle added to the output log (OUT), in order; empty
+     * when it added none. Set only when a cycle was broadcast.
+     */
+    logged?: bigint[]
     /**
      * True when the machine is halted: this cycle halted it (the beneficiary
      * is refunded), or the keeper found it halted. No later tick does work.
@@ -222,14 +235,38 @@ export class Keeper {
     }
 
     /**
+     * The time the next cycle would be stamped with.
+     * Input: the wall clock (unix seconds). Output: `time` = min(now,
+     * MTP - 1), the nLockTime a tick uses, and the `mtp` it read. Pass that
+     * `mtp` to `tick` so that one operation reads the chain tip once.
+     * Throws "chain info: ..." when the tip cannot be read.
+     */
+    async chainTime(now: number): Promise<{ time: number; mtp: number }> {
+        let mtp: number
+        try {
+            mtp = (await this.readChain()).mediantime
+        } catch (e) {
+            throw new Error(
+                hideSecrets(`chain info: ${messageOf(e)}`, this.cfg)
+            )
+        }
+        return { time: Math.min(now, mtp - 1), mtp }
+    }
+
+    /**
      * Run one cycle when one can run now.
-     * Input: the wall clock (unix seconds) and optionally a signed input for
-     * a program that waits for a witness.
+     * Input: the wall clock (unix seconds), optionally a signed input for
+     * a program that waits for a witness, and optionally the median time
+     * past that `chainTime` read (then the tip is not read again).
      * Output: the TickResult, with the config secrets hidden in `error`.
      * Never throws for chain or broadcast errors.
      */
-    async tick(now: number, input?: PendingInput): Promise<TickResult> {
-        const result = await this.tickOnce(now, input)
+    async tick(
+        now: number,
+        input?: PendingInput,
+        knownMtp?: number
+    ): Promise<TickResult> {
+        const result = await this.tickOnce(now, input, knownMtp)
         return result.error
             ? { ...result, error: hideSecrets(result.error, this.cfg) }
             : result
@@ -241,15 +278,18 @@ export class Keeper {
      */
     private async tickOnce(
         now: number,
-        input?: PendingInput
+        input?: PendingInput,
+        knownMtp?: number
     ): Promise<TickResult> {
         if (this.halted) return { ...HALTED }
         let mtp: number
-        try {
-            mtp = (await this.readChain()).mediantime
-        } catch (e) {
-            return { error: `chain info: ${messageOf(e)}` }
-        }
+        if (knownMtp !== undefined) mtp = knownMtp
+        else
+            try {
+                mtp = (await this.readChain()).mediantime
+            } catch (e) {
+                return { error: `chain info: ${messageOf(e)}` }
+            }
         let resynced = false
         for (;;) {
             let current: Current
@@ -365,6 +405,9 @@ export class Keeper {
                 toByteString(plan.payoutHex),
                 options
             )
+            const logged = outputLog(plan.nextState).slice(
+                outputLog(stateOf(m)).length
+            )
             if (plan.halted) {
                 this.halted = true
                 this.current = undefined
@@ -376,6 +419,7 @@ export class Keeper {
                     lockTime,
                     mtp,
                     reward: plan.reward,
+                    logged,
                     halted: plan.halted,
                 },
             }

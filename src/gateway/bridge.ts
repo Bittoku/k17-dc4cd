@@ -14,6 +14,9 @@
 /** Baud rate of the bridge mote's serial line. */
 export const BRIDGE_BAUD_RATE = 115_200
 
+/** Longest line the bridge keeps; longer lines are discarded. */
+export const MAX_LINE_CHARS = 256
+
 /** One reading line: `R`, white space, a decimal number. */
 const READING_LINE = /^R\s+(\d+)\s*$/
 
@@ -29,6 +32,11 @@ export interface BridgeOptions {
     baudRate?: number
     /** Called with each line that is not a reading. Default: ignore it. */
     onIgnored?: (line: string) => void
+    /**
+     * Called once for each line longer than MAX_LINE_CHARS, with the number
+     * of characters discarded. Default: ignore it.
+     */
+    onDiscarded?: (chars: number) => void
 }
 
 /**
@@ -56,28 +64,56 @@ function openSerial(path: string, baudRate: number): NodeJS.ReadableStream {
  * Give the readings of a text stream, one per `R <reading>` line.
  * Input: the stream and the options. Output: the readings in order; ends
  * when the stream ends (a last line without an end-of-line also counts).
+ * A line longer than MAX_LINE_CHARS is discarded up to its end-of-line,
+ * and `onDiscarded` is called once for it, so a mote that never sends an
+ * end-of-line cannot fill the memory.
  */
 async function* readingsOf(
     stream: NodeJS.ReadableStream,
     options: BridgeOptions
 ): AsyncGenerator<number> {
     let rest = ''
+    let discarding = false
+    let discarded = 0
     const take = (line: string): number | undefined => {
         const value = parseReadingLine(line)
         if (value === undefined && line.trim() !== '') options.onIgnored?.(line)
         return value
     }
+    const endDiscard = (): void => {
+        options.onDiscarded?.(discarded)
+        discarding = false
+        discarded = 0
+    }
     for await (const chunk of stream as AsyncIterable<Buffer | string>) {
-        rest += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-        const lines = rest.split('\n')
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        const lines = (rest + text).split('\n')
         rest = lines.pop() as string
         for (const line of lines) {
+            if (discarding) {
+                discarded += line.length
+                endDiscard()
+                continue
+            }
+            if (line.length > MAX_LINE_CHARS) {
+                discarded = line.length
+                endDiscard()
+                continue
+            }
             const value = take(line)
             if (value !== undefined) yield value
         }
+        if (rest.length > MAX_LINE_CHARS) {
+            discarding = true
+            discarded += rest.length
+            rest = ''
+        }
     }
-    const value = take(rest)
-    if (value !== undefined) yield value
+    if (discarding) endDiscard()
+    else {
+        const value = take(rest)
+        if (value !== undefined) yield value
+    }
 }
 
 /**

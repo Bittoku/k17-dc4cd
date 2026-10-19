@@ -197,11 +197,24 @@ class MemoryChain extends DummyProvider {
 }
 
 /** Keeper options with a fixed median time past far ahead of the clock. */
-function keeperOptions(chain: MemoryChain) {
+function keeperOptions(
+    chain: MemoryChain,
+    tip: ChainTip = { mtp: T0 + 1_000_000 }
+) {
     return {
-        chainInfo: async () => ({ mediantime: T0 + 1_000_000, blocks: 1 }),
+        chainInfo: async () => {
+            if (tip.fail) throw new Error(tip.fail)
+            return { mediantime: tip.mtp, blocks: 1 }
+        },
         spentBy: (op: Outpoint) => chain.spentBy(op),
     }
+}
+
+/** A chain tip that a test can move: the median time past, or a failure. */
+interface ChainTip {
+    mtp: number
+    /** When set, reading the tip throws this text. */
+    fail?: string
 }
 
 /**
@@ -209,7 +222,10 @@ function keeperOptions(chain: MemoryChain) {
  * sponsor's endorsement of the landowner into slot 1.
  * Output: the chain, signer and a gateway configuration naming the machine.
  */
-async function consortiumOnChain(enrol: boolean): Promise<{
+async function consortiumOnChain(
+    enrol: boolean,
+    opts: ConsortiumOptions = OPTS
+): Promise<{
     chain: MemoryChain
     signer: TestWallet
     cfg: GatewayConfig
@@ -217,17 +233,25 @@ async function consortiumOnChain(enrol: boolean): Promise<{
     const chain = new MemoryChain()
     const signer = new TestWallet(WALLET_KEY, chain)
     const m = newMachine(
-        consortiumProgram(OPTS),
+        consortiumProgram(opts),
         ECON,
         BigInt(T0),
         rosterOf(),
-        consortiumMemory(OPTS)
+        consortiumMemory(opts)
     )
     await m.connect(signer)
     const tx = await m.deploy(FUNDING)
     const cfg = gatewayConfig({
         machineOutpoint: `${tx.id}:0`,
         instanceId: m.instanceId,
+        consortium: {
+            ...CONSORTIUM,
+            start: opts.start,
+            period: opts.period,
+            epoch: opts.epoch,
+            slots: opts.slots,
+            rounds: opts.rounds,
+        },
     })
     if (enrol) {
         const keeper = new Keeper(cfg, chain, signer, keeperOptions(chain))
@@ -237,7 +261,7 @@ async function consortiumOnChain(enrol: boolean): Promise<{
             sig: signEndorsement(
                 sponsor,
                 m.instanceId,
-                endorseTag(OPTS, 1),
+                endorseTag(opts, 1),
                 landowner.pub,
                 payoutOf(PAYOUT_ADDRESS),
                 1n
@@ -250,6 +274,32 @@ async function consortiumOnChain(enrol: boolean): Promise<{
         cfg.machineOutpoint = endorsed.outpoint
     }
     return { chain, signer, cfg }
+}
+
+/**
+ * Run idle ticks until a status line matches.
+ * Input: the gateway, the pattern and the most ticks to run.
+ * Output: the matching line. Throws with all lines when none matches.
+ */
+async function tickUntil(
+    gateway: Gateway,
+    pattern: RegExp,
+    most = 8
+): Promise<string> {
+    const lines: string[] = []
+    for (let i = 0; i < most; i++) {
+        const line = await gateway.tickIdle()
+        lines.push(line)
+        if (pattern.test(line)) return line
+    }
+    throw new Error(`no line matches ${pattern}:\n${lines.join('\n')}`)
+}
+
+/** The output log of the machine a gateway serves now. */
+function outLogOf(chain: MemoryChain, gateway: Gateway): bigint[] {
+    const [txid] = gateway.outpoint!.split(':')
+    return decodeMachine(chain.txs.get(txid)!.outputs[0].script.toHex())
+        .machine!.outLog
 }
 
 /** Collect every value of an async iterable. */
@@ -302,12 +352,33 @@ describe('gateway: bridge', () => {
     })
 })
 
+describe('gateway: bridge limits', () => {
+    it('discards a line longer than the limit and goes on', async () => {
+        const discarded: number[] = []
+        const values = await collect(
+            openBridge(
+                Readable.from([
+                    'x'.repeat(300) + '\nR 5\n',
+                    'y'.repeat(200),
+                    'y'.repeat(200),
+                    '\nR 6\n',
+                ]),
+                { onDiscarded: (chars) => discarded.push(chars) }
+            )
+        )
+        expect(values).to.deep.equal([5, 6])
+        expect(discarded).to.deep.equal([300, 400])
+    })
+})
+
 describe('gateway: attester', () => {
     const attester = new GatewayAttester(gatewayConfig())
 
-    it('derives the round from the clock and the [consortium] settings', () => {
+    it('derives the round from the chain time and the [consortium] settings', () => {
         const mem = memWithSlot1(landowner.pub)
-        expect(attester.currentRound(OPTS.start - 1, mem)).to.equal(null)
+        // Round 0 opens when enrolment ends, which can be before start.
+        expect(attester.currentRound(OPTS.start - 1, mem)).to.equal(0)
+        expect(attester.currentRound(T0, mem)).to.equal(0)
         expect(attester.currentRound(OPTS.start, mem)).to.equal(0)
         expect(
             attester.currentRound(OPTS.start + OPTS.period - 1, mem)
@@ -492,6 +563,108 @@ describe('gateway: run loop', function () {
     })
 })
 
+describe('gateway: chain time and pending readings', function () {
+    this.timeout(300_000)
+    before(async () => {
+        await K17Machine.loadArtifact(
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            require('k17-vm/artifacts/k17Machine.json')
+        )
+    })
+
+    it('takes the round from the chain time when MTP lags the clock by 2400 s', async () => {
+        const LONG: ConsortiumOptions = { ...OPTS, period: 3600 }
+        const { chain, signer, cfg } = await consortiumOnChain(true, LONG)
+        // The wall clock is 100 s past the close of round 0 ...
+        const wall = LONG.start + LONG.period + 100
+        // ... but the chain time, min(now, MTP - 1), is still in round 0.
+        const tip: ChainTip = { mtp: wall - 2400 }
+        const gateway = new Gateway(cfg, chain, signer, {
+            keeper: keeperOptions(chain, tip),
+            now: () => wall,
+        })
+        const first = await gateway.handleReading(5231)
+        expect(first).to.match(/^round 0 slot 1 /)
+        expect(first).to.not.contain('refused')
+        await tickUntil(gateway, /delivered 1 earned 150 sats/)
+        expect(outLogOf(chain, gateway)).to.deep.equal([5231n])
+        // Every cycle so far is stamped in round 0 of the machine.
+        for (const tx of chain.txs.values())
+            expect(tx.nLockTime).to.be.below(LONG.start + LONG.period)
+        // MTP passes the close: the next reading is for round 1.
+        tip.mtp = wall + 10
+        const second = await gateway.handleReading(5300)
+        expect(second).to.match(/^round 1 slot 1 /)
+        await tickUntil(gateway, /delivered 2 earned 300 sats/)
+        expect(outLogOf(chain, gateway)).to.deep.equal([5231n, 5300n])
+        expect(chain.verifyMachineSpends()).to.be.greaterThan(6)
+    })
+
+    it('keeps a pending reading through a skipped and a failed tick, then refuses a second reading in the round', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(true)
+        // Chain time T0 + 1 is before the machine's lastTime (T0 + 2): skip.
+        const tip: ChainTip = { mtp: T0 + 2 }
+        const gateway = new Gateway(cfg, chain, signer, {
+            keeper: keeperOptions(chain, tip),
+            now: () => OPTS.start + 100,
+        })
+        const skipped = await gateway.handleReading(5231)
+        expect(skipped).to.contain('skipped: waiting')
+        expect(gateway.pendingReading).to.equal(5231)
+        tip.fail = 'tip unreachable'
+        const failed = await gateway.tickIdle()
+        expect(failed).to.contain('tip unreachable')
+        expect(gateway.pendingReading).to.equal(5231)
+        tip.fail = undefined
+        tip.mtp = T0 + 1_000_000
+        await tickUntil(gateway, /delivered 1 earned 150 sats/)
+        expect(gateway.pendingReading).to.equal(undefined)
+        expect(outLogOf(chain, gateway)).to.deep.equal([5231n])
+        const before = chain.cycleBroadcasts
+        const duplicate = await gateway.handleReading(5300)
+        expect(duplicate).to.contain('slot already delivered in round 0')
+        expect(chain.cycleBroadcasts).to.equal(before)
+        expect(gateway.pendingReading).to.equal(undefined)
+    })
+
+    it('drops a pending reading that the machine rejects instead of retrying it', async () => {
+        const { chain, signer, cfg } = await consortiumOnChain(true)
+        cfg.signAnyway = true
+        const gateway = new Gateway(cfg, chain, signer, {
+            keeper: keeperOptions(chain),
+            now: () => OPTS.start + 100,
+        })
+        await gateway.handleReading(9000) // signed, outside the program's range
+        await tickUntil(gateway, /dropped reading 9000: the machine rejects it/)
+        expect(gateway.pendingReading).to.equal(undefined)
+        const next = await gateway.tickIdle()
+        expect(next).to.contain('needs witness')
+        expect(next).to.not.contain('witness rejected')
+    })
+
+    it('ends run() with exit code 1 and a hidden message when the bridge fails', async () => {
+        const chain = new MemoryChain()
+        const lines: string[] = []
+        const failing: AsyncIterable<number> = {
+            [Symbol.asyncIterator]: () => ({
+                next: async () => {
+                    throw new Error(`port gone near ${WALLET_KEY.toWIF()}`)
+                },
+            }),
+        }
+        const gateway = new Gateway(
+            gatewayConfig(),
+            chain,
+            new TestWallet(WALLET_KEY, chain),
+            { bridge: failing, out: (line) => lines.push(line) }
+        )
+        expect(await gateway.run()).to.equal(1)
+        expect(lines.join('\n')).to.contain('bridge failed: port gone')
+        expectNoSecret(lines)
+        expect(chain.txs.size).to.equal(0)
+    })
+})
+
 describe('gateway commands', function () {
     this.timeout(60_000)
     const dir = mkdtempSync(join(tmpdir(), 'k17gateway-'))
@@ -578,6 +751,18 @@ describe('gateway commands', function () {
         expect(lines.join('\n')).to.contain('--i-know-this-spends-real-money')
         expect(chain.txs.size).to.equal(0)
         expectNoSecret(lines)
+    })
+
+    it('refuses a [consortium] start below 1', () => {
+        const path = configFile('gw-start.toml')
+        writeFileSync(
+            path,
+            readFileSync(path, 'utf8') +
+                '[consortium]\nstart = 0\nperiod = 60\nepoch = 1\nslots = 1\nrounds = 1\n'
+        )
+        expect(() => loadConfig(path)).to.throw(
+            'config: [consortium] start must be a whole number, 1 or more'
+        )
     })
 
     it('is reachable from the main dispatcher', async () => {

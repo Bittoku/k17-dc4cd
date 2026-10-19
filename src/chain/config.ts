@@ -141,7 +141,7 @@ function consortiumSettings(doc: TOML.JsonMap): ConsortiumSettings | undefined {
         return value
     }
     const settings: ConsortiumSettings = {
-        start: required('start', 0),
+        start: required('start', 1),
         period: required('period', 1),
         epoch: required('epoch', 0),
         slots: required('slots', 1),

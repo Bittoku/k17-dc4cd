@@ -9,11 +9,18 @@
  * need no witness (round open, pay). The keeper picks the lock time
  * (min(now, MTP - 1)) and handles resync.
  *
+ * Rounds follow the chain time, not the wall clock: the time a cycle is
+ * stamped with, min(now, MTP - 1) (`Keeper.chainTime`), because the
+ * program reads its round from the nLockTime. Each operation reads the
+ * median time past once and gives it to the keeper's tick.
+ *
  * A pending input stays until a cycle that this gateway broadcast logs a
- * reading (the attest cycle runs OUT after it reads the witness), or until
- * its round is no longer open by the clock. After a delivery the gateway
- * signs no other reading for that round, because the program accepts one
- * reading per slot per round.
+ * reading (the attest cycle runs OUT after it reads the witness; the
+ * keeper reports the logged cells), until its round is no longer open at
+ * the chain time, or until the planner rejects it ("witness rejected"),
+ * which no retry can change. A skipped or failed tick keeps it. After a
+ * delivery the gateway signs no other reading for that round, because the
+ * program accepts one reading per slot per round.
  *
  * Each tick and each reading gives one status line: the round, the slot,
  * the readings delivered and satoshis earned by this slot so far (from
@@ -23,12 +30,7 @@
 import type { Provider, Signer } from 'scrypt-ts'
 import { bsv } from 'scrypt-ts'
 import { GatewayConfig, hideSecrets } from '../chain/config'
-import {
-    Keeper,
-    KeeperOptions,
-    PendingInput,
-    TickResult,
-} from '../chain/keeper'
+import { Keeper, KeeperOptions, PendingInput } from '../chain/keeper'
 import { TxSource, parseOutpoint, walkHistory } from '../chain/history'
 import { DecodedMachine, decodeMachine } from '../chain/decode'
 import { tickLine } from '../cli/keeper'
@@ -93,6 +95,20 @@ class CachedSource implements TxSource {
     }
 }
 
+/** Chain time of one operation: the lock time and the MTP it came from. */
+interface ChainNow {
+    /** min(now, MTP - 1): the nLockTime the next cycle gets. */
+    time: number
+    /** The median time past that was read. */
+    mtp: number
+}
+
+/** The round text of a status line when the chain time is not known. */
+const UNKNOWN = '?'
+
+/** Exit code of `run` when the bridge failed. */
+export const BRIDGE_FAILED = 1
+
 /** Relays the readings of one slot into one consortium machine. */
 export class Gateway {
     private readonly keeper: Keeper
@@ -111,6 +127,8 @@ export class Gateway {
     /** Work that runs one at a time: readings and timer ticks. */
     private queue: Promise<void> = Promise.resolve()
     private idleQueued = false
+    /** Delivered count and earnings text of the last history walk. */
+    private tally = 'delivered ? earned ? sats'
 
     /**
      * Make a gateway.
@@ -130,10 +148,17 @@ export class Gateway {
         this.keeper = new Keeper(cfg, provider, signer, options.keeper)
         this.latest = this.keeper.outpoint as string
         this.source = new CachedSource(provider)
-        this.bridge = options.bridge ?? openBridge(cfg.serial ?? 'stdin')
         this.now = options.now ?? (() => Math.floor(Date.now() / 1000))
         this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
         this.out = options.out ?? ((line) => console.log(line))
+        this.bridge =
+            options.bridge ??
+            openBridge(cfg.serial ?? 'stdin', {
+                onDiscarded: (chars) =>
+                    this.out(
+                        `bridge: discarded a line of ${chars} characters (longer than the limit)`
+                    ),
+            })
     }
 
     /** The machine outpoint the next tick spends; undefined once halted. */
@@ -141,17 +166,27 @@ export class Gateway {
         return this.halted ? undefined : this.keeper.outpoint
     }
 
+    /** The reading that waits for an attest cycle, if any. */
+    get pendingReading(): number | undefined {
+        return this.pending?.reading
+    }
+
     /**
      * Take one reading: check, sign, and tick with it.
      * Input: the reading. Output: the status line. When the slot is not
-     * enrolled, no round is open, the reading is out of range, or the slot
-     * already delivered in this round, the line says why and nothing is
-     * broadcast.
+     * enrolled, no round is open at the chain time, the reading is out of
+     * range, or the slot already delivered in this round, the line says why
+     * and nothing is broadcast.
      */
     async handleReading(reading: number): Promise<string> {
         if (this.halted) return this.status(null, 'machine halted')
-        const now = this.now()
-        let round: number | null = this.attester.roundAt(now)
+        let chain: ChainNow
+        try {
+            chain = await this.keeper.chainTime(this.now())
+        } catch (e) {
+            return this.status(UNKNOWN, `reading ${reading}: ${messageOf(e)}`)
+        }
+        let round: number | null = this.attester.roundAt(chain.time)
         let machine: DecodedMachine | null
         try {
             machine = await this.currentMachine()
@@ -160,11 +195,11 @@ export class Gateway {
         }
         if (machine) {
             try {
-                round = this.attester.currentRound(now, machine)
+                round = this.attester.currentRound(chain.time, machine)
                 if (round !== null && this.deliveredRounds.has(round))
                     return this.status(
                         round,
-                        `reading ${reading} not signed: slot already delivered in round ${round}`
+                        `reading ${reading} refused: slot already delivered in round ${round}`
                     )
                 const input = this.attester.sign(reading, round)
                 this.pending = { input, round: round as number, reading }
@@ -175,7 +210,7 @@ export class Gateway {
                 )
             }
         }
-        return this.tick(now)
+        return this.tick(chain)
     }
 
     /**
@@ -184,16 +219,23 @@ export class Gateway {
      */
     async tickIdle(): Promise<string> {
         if (this.halted) return this.status(null, 'machine halted')
-        return this.tick(this.now())
+        let chain: ChainNow
+        try {
+            chain = await this.keeper.chainTime(this.now())
+        } catch (e) {
+            return this.status(UNKNOWN, `error: ${messageOf(e)}`)
+        }
+        return this.tick(chain)
     }
 
     /**
      * Run until the bridge ends or the machine halts: one tick per reading
      * and one tick per interval. Each status line goes to `out`.
-     * Output: none. Never throws for chain errors (they are status lines).
+     * Output: 0 when the bridge ended or the machine halted; BRIDGE_FAILED
+     * when the bridge failed (the error goes to `out`, with the secrets
+     * hidden). Never throws for chain errors (they are status lines).
      */
-    async run(): Promise<void> {
-        const iterator = this.bridge[Symbol.asyncIterator]()
+    async run(): Promise<number> {
         let stop: () => void = () => undefined
         const stopped = new Promise<'stop'>((resolve) => {
             stop = () => resolve('stop')
@@ -207,7 +249,9 @@ export class Gateway {
             }, stop)
         }, this.intervalMs)
         let next: Promise<IteratorResult<number>> | undefined
+        let code = 0
         try {
+            const iterator = this.bridge[Symbol.asyncIterator]()
             while (!this.halted) {
                 next = iterator.next()
                 const step = await Promise.race([next, stopped])
@@ -217,6 +261,10 @@ export class Gateway {
                 const reading = step.value
                 await this.enqueue(() => this.handleReading(reading), stop)
             }
+        } catch (e) {
+            next = undefined
+            this.out(hideSecrets(`bridge failed: ${messageOf(e)}`, this.cfg))
+            code = BRIDGE_FAILED
         } finally {
             clearInterval(timer)
             await this.queue
@@ -226,6 +274,7 @@ export class Gateway {
                 ;(this.bridge as Partial<Bridge>).close?.()
             }
         }
+        return code
     }
 
     /**
@@ -242,7 +291,7 @@ export class Gateway {
             try {
                 line = await work()
             } catch (e) {
-                line = await this.status(null, `error: ${messageOf(e)}`)
+                line = await this.status(UNKNOWN, `error: ${messageOf(e)}`)
             }
             this.out(line)
             if (this.halted) onHalt()
@@ -252,55 +301,35 @@ export class Gateway {
 
     /**
      * One keeper tick with the pending input.
-     * Input: the clock. Output: the status line.
+     * Input: the chain time of this operation. Output: the status line.
      */
-    private async tick(now: number): Promise<string> {
-        const round = this.attester.roundAt(now)
+    private async tick(chain: ChainNow): Promise<string> {
+        const round = this.attester.roundAt(chain.time)
         let note = ''
         if (this.pending && this.pending.round !== round) {
             note = ` (dropped reading ${this.pending.reading}: round ${this.pending.round} closed)`
             this.pending = undefined
         }
-        const result = await this.keeper.tick(now, this.pending?.input)
+        const result = await this.keeper.tick(
+            this.now(),
+            this.pending?.input,
+            chain.mtp
+        )
         if (result.halted) this.halted = true
         if (result.txid)
             this.latest = this.keeper.outpoint ?? `${result.txid}:0`
-        if (result.txid && this.pending && (await this.loggedReading(result)))
-            this.markDelivered()
-        return this.status(round, tickLine(result) + note)
-    }
-
-    /** Record that the pending reading is on the chain. */
-    private markDelivered(): void {
-        if (!this.pending) return
-        this.deliveredRounds.add(this.pending.round)
-        this.pending = undefined
-    }
-
-    /**
-     * Tell whether the cycle of a tick logged a reading (ran OUT): its
-     * output log is longer than that of the machine it spent. A cycle this
-     * gateway broadcast reads its witness from this gateway's input, so a
-     * logged reading is this gateway's.
-     * Input: a tick result with a txid. Output: true when it logged one.
-     */
-    private async loggedReading(result: TickResult): Promise<boolean> {
-        try {
-            const tx = await this.source.getTransaction(result.txid as string)
-            const input = tx.inputs[0]
-            const spent = (
-                await this.source.getTransaction(input.prevTxId.toString('hex'))
-            ).outputs[input.outputIndex]
-            const before = decodeMachine(spent.script.toHex()).machine
-            const after = decodeMachine(tx.outputs[0].script.toHex()).machine
-            return (
-                !!before &&
-                !!after &&
-                after.outLog.length > before.outLog.length
-            )
-        } catch {
-            return false
+        if (this.pending && result.txid && result.logged?.length) {
+            // The cycle ran OUT: it read this gateway's witness.
+            this.deliveredRounds.add(this.pending.round)
+            this.pending = undefined
+        } else if (
+            this.pending &&
+            /witness rejected/.test(result.error ?? '')
+        ) {
+            note += ` (dropped reading ${this.pending.reading}: the machine rejects it)`
+            this.pending = undefined
         }
+        return this.status(round, tickLine(result) + note)
     }
 
     /**
@@ -319,12 +348,13 @@ export class Gateway {
     /**
      * The status line: round, slot, delivered readings and satoshis earned
      * by this slot (from the machine's history), then the detail.
-     * Input: the round (null: none open) and the detail text.
+     * Input: the round at the chain time (null: none open; '?': the chain
+     * time is not known) and the detail text.
      * Output: one line with the config secrets hidden. It walks the history
      * first (`refreshTally`).
      */
     private async status(
-        round: number | null,
+        round: number | null | typeof UNKNOWN,
         detail: string
     ): Promise<string> {
         await this.refreshTally()
@@ -335,9 +365,6 @@ export class Gateway {
             this.cfg
         )
     }
-
-    /** Delivered count and earnings text of the last history walk. */
-    private tally = 'delivered ? earned ? sats'
 
     /**
      * Walk the machine's history and update the delivered count and the

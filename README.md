@@ -20,6 +20,7 @@ trail — at the price of block latency and transaction fees.
 | `src/programs/fuzzy.ts` | DC4CD §5.2: distributed fuzzy fire detection as a demo. Attested packed opinions, fuzzy AND/OR with `min`/`max`, threshold, alarm bounty. |
 | `examples/*.fs` | The generated Forth source of both programs, for `npm run forth`. |
 | `src/gateway/` | The gateway (`k17forth gateway init` / `run`): reads `R <reading>` lines from a bridge mote, signs each reading for its consortium slot and round, and relays it through the keeper. It refuses a closed round, a slot that is not enrolled, and a reading out of range. |
+| `docs/tutorial-dc4cd-gateway.md` | Tutorial: a sponsor and three landowners on testnet, from `gateway init` to `inspect --history`, with a worked example. |
 | `docs/bridge-mote.fs` | DC4CD words for the bridge mote (`>gateway`, `report`) and the `tell:` line that makes nodes report one time in each period. |
 | `docs/inter-machine-tell.md` | Design note for two machines messaging in one transaction (DC4CD's nested `tell:`). Parked: blocked on interpreter size. |
 | `docs/euroforth-writeup-draft.md` | Draft write-up. Not for circulation until the K17 defensive publication is public. |
@@ -35,6 +36,40 @@ npm install
 npm test
 npm run forth examples/relay.fs
 ```
+
+## Commands
+
+`npm run k17forth -- <command>` runs the tool from the source.
+
+| Command | What it does |
+|---|---|
+| `compile <file.fs>` | Prints the hex, the disassembly and the instructions per cycle. |
+| `run <file.fs> --scenario <file.json>` | Runs a program on the reference VM, one cycle per scenario entry. |
+| `repl [file.fs]` | Runs Forth one line at a time and shows the machine. |
+| `inspect <txid[:vout]> [--history]` | Shows a machine on the chain and, with `--history`, each cycle back to the deployment. |
+| `deploy <file.fs> --config <toml> ...` | Deploys a machine and writes its outpoint into the config. |
+| `endorse --config <sponsor.toml> --member <key> --payout <addr> --slot <n>` | The sponsor enrols a landowner key into a roster slot. |
+| `keeper --config <toml>` | Advances the machine, one cycle per tick, until it stops. |
+| `gateway init --config <toml>` | Makes the Rabin key of a landowner and prints what the sponsor needs. |
+| `gateway run --config <toml> [--once]` | Signs the bridge readings and relays them. With `--once` it stops after one paid reading. |
+
+Each command that spends money refuses mainnet without `--i-know-this-spends-real-money`. No command prints the wallet key or a Rabin prime.
+
+## Operational rules
+
+These rules come from the testnet spike and the rehearsal of 2026-10-19.
+
+- A node mines a cycle only when its lock time is below the median time past (MTP). The keeper and the gateway use min(now, MTP - 1). On testnet, MTP is 40 to 50 minutes behind the clock.
+
+- The consortium program reads its round from the lock time. A round closes when the MTP passes the close time. Make `period` much longer than the MTP lag.
+
+- The chain accepts chains of unconfirmed cycles. The tools do not wait for confirmations.
+
+- A full cycle is about 720 KB and costs about 720 satoshis in fees on testnet.
+
+- The tools list wallet coins from WhatsOnChain without the coins that a mempool transaction spends. They retry rate-limited calls (HTTP 429) and reads of a transaction that is not yet indexed.
+
+- The config file keeps the deployment outpoint. The tools follow the machine forward from it.
 
 ## The relay in Forth
 

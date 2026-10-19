@@ -20,3 +20,19 @@ held write-up belong here.
   (decision 2026-10-18: publish first, no provisional filing). Do not publish, post, or send it to
   the DC4CD authors before that, and only on Dave's explicit go.
 - Commit messages carry no AI attribution lines (user rule).
+
+## Chain tooling (k17forth)
+
+- Commands: `inspect`, `deploy`, `endorse`, `keeper`, `gateway init|run` (see the README table and
+  `docs/tutorial-dc4cd-gateway.md`). `main()` loads the K17Machine artifact for these commands.
+- Tests never use the network. Inject `provider`, `signer`, `keeper` (chain info, spends lookup)
+  and `now` through each command's deps. Consortium fixtures live in
+  `tests/utils/consortiumChain.ts`.
+- Lock time is always min(now, MTP - 1); never use the wall clock for a lock time.
+- `makeProvider` lists coins from WhatsOnChain `confirmed/unspent` + `unconfirmed/unspent` and
+  drops coins with `isSpentInMempoolTx`. Plain `/unspent` keeps mempool-spent coins and causes
+  `txn-mempool-conflict` across processes.
+- WhatsOnChain answers 429 and "Not Found" (just after a broadcast) are transient: retry them
+  (`retryOn429`, `withRetry`). scrypt-ts providers leave their connection check rejection
+  unhandled; the CLI turns "connect failed" into a warning.
+- Testnet only for live runs. Secrets (WIF, Rabin primes) never go into logs, docs or notes.

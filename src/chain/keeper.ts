@@ -33,7 +33,7 @@ import {
     stateOf,
 } from 'k17-vm'
 import { GatewayConfig, hideSecrets } from './config'
-import { ChainInfo, FetchLike, chainInfo } from './provider'
+import { ChainInfo, FetchLike, chainInfo, wocFetch } from './provider'
 import { Outpoint, parseOutpoint } from './history'
 import { decodeMachine } from './decode'
 
@@ -172,7 +172,7 @@ async function wocSpend(
 export async function wocSpentBy(
     network: 'testnet' | 'mainnet',
     outpoint: Outpoint,
-    fetchFn: FetchLike = fetch as unknown as FetchLike
+    fetchFn: FetchLike = wocFetch
 ): Promise<string | undefined> {
     const base = `https://api.whatsonchain.com/v1/bsv/${
         network === 'testnet' ? 'test' : 'main'
@@ -232,6 +232,17 @@ export class Keeper {
         if (this.halted) return undefined
         if (this.current) return `${this.current.tx.id}:${this.current.vout}`
         return `${this.start.txid}:${this.start.vout}`
+    }
+
+    /**
+     * The transaction of the machine output the next tick spends, when the
+     * keeper has loaded it (after a tick or `sync`); undefined before that
+     * and once the machine halted. Callers read the newest machine state
+     * from it without a fetch, which can fail for some seconds after a
+     * broadcast.
+     */
+    get machineTx(): bsv.Transaction | undefined {
+        return this.halted ? undefined : this.current?.tx
     }
 
     /**

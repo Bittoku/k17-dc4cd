@@ -6,6 +6,7 @@ import { expect } from 'chai'
 import { mkdtempSync, writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { execFileSync } from 'child_process'
 import {
     outputLog,
     newAttester,
@@ -19,7 +20,7 @@ import { Scenario, runScenario } from '../src/cli/scenario'
 import { compileCommand } from '../src/cli/compile'
 import { runCommand } from '../src/cli/run'
 import { Repl } from '../src/cli/repl'
-import { main } from '../src/cli/k17forth'
+import { main, onUnhandledRejection } from '../src/cli/k17forth'
 
 const T0 = 1_760_000_000
 const OPTS: RelayOptions = {
@@ -259,6 +260,37 @@ describe('k17forth', function () {
             expect(main([], c.io)).to.equal(2)
             expect(c.text()).to.contain('usage')
             expect(main(['nope'], c.io)).to.equal(2)
+        })
+
+        it('warns on a rejected provider connection check and rethrows other rejections', () => {
+            const c = capture()
+            onUnhandledRejection(
+                new Error('connect failed: Too Many Requests'),
+                c.io
+            )
+            expect(c.text()).to.contain('warning: provider connect failed')
+            const other = new Error('boom')
+            expect(() => onUnhandledRejection(other, c.io)).to.throw('boom')
+        })
+
+        it('loads the K17Machine artifact for a chain command in a fresh process', function () {
+            this.timeout(120_000)
+            // A new process has no artifact loaded, as when a user runs the
+            // tool; after `main(['inspect'])` a machine can be made.
+            const script = `
+                const { main } = require('./src/cli/k17forth')
+                Promise.resolve(main(['inspect'], { out() {}, err() {} })).then(() => {
+                    const { newMachine, rosterOf } = require('k17-vm')
+                    const econ = { beneficiary: '00'.repeat(20), rewardMin: 1n, slope: 0n, rewardMax: 1n }
+                    newMachine('00', econ, 0n, rosterOf())
+                    console.log('machine ok')
+                })`
+            const output = execFileSync(
+                process.execPath,
+                ['-r', 'ts-node/register', '-e', script],
+                { cwd: join(__dirname, '..'), encoding: 'utf8' }
+            )
+            expect(output).to.contain('machine ok')
         })
     })
 })

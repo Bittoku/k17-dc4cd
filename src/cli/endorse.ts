@@ -214,7 +214,9 @@ export async function endorseCommand(
                     )
                 return 1
             }
-            const next = (await provider.getTransaction(result.txid)).outputs[0]
+            // The keeper keeps the new cycle; a fetch can fail for some
+            // seconds after the broadcast.
+            const next = keeper.machineTx?.outputs[0]
             const after = next && decodeMachine(next.script.toHex()).machine
             if (
                 !after ||

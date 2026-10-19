@@ -13,6 +13,10 @@ import { deployCommand } from './deploy'
 import { endorseCommand } from './endorse'
 import { keeperCommand } from './keeper'
 import { gatewayCommand } from './gateway'
+import { loadK17Artifact } from '../chain/artifact'
+
+/** Commands that make or read K17 machines: they need the artifact. */
+const CHAIN_COMMANDS = ['inspect', 'deploy', 'endorse', 'keeper', 'gateway']
 
 /** Where a command writes its text. */
 export interface CliIo {
@@ -54,6 +58,7 @@ commands:
  * Input: arguments (without node and script name) and an output sink.
  * Output: exit code, or a promise of it for `inspect`, `deploy`,
  * `endorse`, `keeper` and `gateway`, which use the chain.
+ * The chain commands load the K17Machine artifact first.
  * The repl is asynchronous, so for `repl` this returns 0 when the session has
  * started and the process stays open until it ends.
  */
@@ -62,6 +67,7 @@ export function main(
     io: CliIo = PROCESS_IO
 ): number | Promise<number> {
     const [command, ...rest] = argv
+    if (CHAIN_COMMANDS.includes(command)) loadK17Artifact()
     switch (command) {
         case 'compile':
             return compileCommand(rest, io)
@@ -85,7 +91,30 @@ export function main(
     }
 }
 
+/**
+ * Handle a promise rejection that no code waits for.
+ * Each scrypt-ts provider starts a connection check when it is made and
+ * leaves the rejection of that check unhandled; a rate-limited check
+ * ("connect failed: Too Many Requests") would then stop the process. The
+ * provider checks the connection again before its next call, so that
+ * rejection is only a warning. Any other rejection is thrown again.
+ * Input: the rejection reason and an output sink. Output: none.
+ */
+export function onUnhandledRejection(reason: unknown, io: CliIo): void {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    if (/^connect failed/.test(message)) {
+        io.err(
+            `warning: provider ${message} (it tries again before its next call)`
+        )
+        return
+    }
+    throw reason
+}
+
 if (require.main === module) {
+    process.on('unhandledRejection', (reason) =>
+        onUnhandledRejection(reason, PROCESS_IO)
+    )
     Promise.resolve(main(process.argv.slice(2))).then((code) => {
         process.exitCode = code
     })

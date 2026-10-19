@@ -33,6 +33,12 @@ import {
     withMachine,
 } from '../src/chain/config'
 import { Outpoint } from '../src/chain/history'
+import {
+    makeProvider,
+    retryOn429,
+    withRetry,
+    wocUnspent,
+} from '../src/chain/provider'
 import { deployCommand } from '../src/cli/deploy'
 import { keeperCommand } from '../src/cli/keeper'
 import { CliIo, main } from '../src/cli/k17forth'
@@ -397,6 +403,137 @@ describe('keeper helpers', () => {
         expect(isConflictError('64: non-final')).to.equal(false)
         expect(isConflictError('HTTP 500: timeout')).to.equal(false)
         expect(isConflictError('HTTP 500: input too large')).to.equal(false)
+    })
+
+    it('retries a WhatsOnChain call that is rate limited (HTTP 429)', async () => {
+        const statuses = [429, 429, 200]
+        let calls = 0
+        const fetchFn = retryOn429(
+            async () => {
+                const status = statuses[calls++]
+                return { ok: status === 200, status, json: async () => ({}) }
+            },
+            3,
+            0
+        )
+        expect((await fetchFn('https://x')).status).to.equal(200)
+        expect(calls).to.equal(3)
+        // After the last attempt the 429 answer goes back to the caller.
+        calls = 0
+        const always = retryOn429(
+            async () => {
+                calls++
+                return { ok: false, status: 429, json: async () => ({}) }
+            },
+            2,
+            0
+        )
+        expect((await always('https://x')).status).to.equal(429)
+        expect(calls).to.equal(2)
+    })
+
+    it('retries a transient provider error, and gives up on another error', async () => {
+        let calls = 0
+        const flaky = async () => {
+            if (++calls < 3) throw new Error('Not Found')
+            return 'tx'
+        }
+        expect(await withRetry(flaky, /Not Found/, 4, 0)).to.equal('tx')
+        expect(calls).to.equal(3)
+        calls = 0
+        let message = ''
+        try {
+            await withRetry(
+                async () => {
+                    calls++
+                    throw new Error('bad-txns-in-belowout')
+                },
+                /Not Found/,
+                4,
+                0
+            )
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.equal('bad-txns-in-belowout')
+        expect(calls).to.equal(1)
+    })
+
+    it('lists unspent outputs without those a mempool transaction spends', async () => {
+        const address = WALLET_KEY.toAddress('testnet').toString()
+        const urls: string[] = []
+        const base = `https://api.whatsonchain.com/v1/bsv/test/address/${address}`
+        const bodies: Record<string, unknown> = {
+            [`${base}/confirmed/unspent`]: {
+                result: [
+                    {
+                        tx_hash: 'aa'.repeat(32),
+                        tx_pos: 1,
+                        value: 9_000_000,
+                        isSpentInMempoolTx: true,
+                    },
+                    {
+                        tx_hash: 'bb'.repeat(32),
+                        tx_pos: 0,
+                        value: 19_340,
+                        isSpentInMempoolTx: false,
+                    },
+                ],
+            },
+            [`${base}/unconfirmed/unspent`]: {
+                result: [
+                    {
+                        tx_hash: 'cc'.repeat(32),
+                        tx_pos: 1,
+                        value: 8_990_000,
+                        isSpentInMempoolTx: false,
+                    },
+                    {
+                        tx_hash: 'dd'.repeat(32),
+                        tx_pos: 2,
+                        value: 160,
+                        isSpentInMempoolTx: true,
+                    },
+                ],
+            },
+        }
+        const fetchFn = async (url: string) => {
+            urls.push(url)
+            return { ok: true, status: 200, json: async () => bodies[url] }
+        }
+        const script = bsv.Script.buildPublicKeyHashOut(
+            bsv.Address.fromString(address)
+        ).toHex()
+        const expected = [
+            { txId: 'bb'.repeat(32), outputIndex: 0, satoshis: 19_340, script },
+            {
+                txId: 'cc'.repeat(32),
+                outputIndex: 1,
+                satoshis: 8_990_000,
+                script,
+            },
+        ]
+        expect(await wocUnspent('testnet', address, fetchFn)).to.deep.equal(
+            expected
+        )
+        // The provider of the tools lists the same outputs.
+        urls.length = 0
+        const provider = makeProvider('testnet', fetchFn)
+        expect(
+            await provider.listUnspent(bsv.Address.fromString(address))
+        ).to.deep.equal(expected)
+        expect(urls).to.have.length(2)
+        let message = ''
+        try {
+            await wocUnspent('testnet', address, async () => ({
+                ok: true,
+                status: 200,
+                json: async () => ({ error: 'busy' }),
+            }))
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.contain('unexpected response')
     })
 
     it('reads the spends lookup from WhatsOnChain', async () => {

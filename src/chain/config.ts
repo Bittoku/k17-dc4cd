@@ -6,10 +6,20 @@
  * machine and gateway options. The file holds secrets (`wif`, `rabin_p`,
  * `rabin_q`), so the loader refuses a file that other users can read, and
  * `describeConfig` shows a configuration with the secrets hidden. No error
- * message or description ever contains a secret value.
+ * message or description ever contains a secret value. `saveMachine`
+ * writes a new `[machine]` outpoint and instance id into the file in place,
+ * atomically, and keeps the file mode.
  */
 
-import { readFileSync, statSync } from 'fs'
+import {
+    chmodSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from 'fs'
+import { randomBytes } from 'crypto'
 import * as TOML from '@iarna/toml'
 
 /** Networks the tools can talk to. */
@@ -30,6 +40,8 @@ export interface GatewayConfig {
     serial?: string
     /** The machine to serve, as `txid:vout`. */
     machineOutpoint?: string
+    /** Instance id of that machine, 64 hex characters (`[machine] instance_id`). */
+    instanceId?: string
     /** Roster slot of this gateway. */
     slot?: number
     /** Sign a reading even when the gateway thinks it is out of range. */
@@ -98,6 +110,7 @@ export function loadConfig(path: string): GatewayConfig {
     const wif = optionalString('wallet', table(doc, 'wallet'), 'wif')
     if (!wif) throw new Error('config: [wallet] wif is required')
     const attester = table(doc, 'attester')
+    const machine = table(doc, 'machine')
     const gateway = table(doc, 'gateway')
     const slot = gateway.slot
     if (
@@ -117,11 +130,8 @@ export function loadConfig(path: string): GatewayConfig {
         rabinQ: optionalString('attester', attester, 'rabin_q'),
         payoutAddress: optionalString('attester', attester, 'payout_address'),
         serial: optionalString('bridge', table(doc, 'bridge'), 'serial'),
-        machineOutpoint: optionalString(
-            'machine',
-            table(doc, 'machine'),
-            'outpoint'
-        ),
+        machineOutpoint: optionalString('machine', machine, 'outpoint'),
+        instanceId: optionalString('machine', machine, 'instance_id'),
         slot: slot as number | undefined,
         signAnyway: signAnyway === true,
     }
@@ -145,4 +155,93 @@ export function describeConfig(cfg: GatewayConfig): string {
         `slot=${cfg.slot ?? 'not set'}`,
         `sign_anyway=${cfg.signAnyway}`,
     ].join(' ')
+}
+
+/** TOML line that starts a table, for example `[machine]`. */
+const TABLE_HEADER = /^\s*\[/
+
+/**
+ * Set `[machine] outpoint` and `instance_id` in the text of a config file.
+ * Input: the file text, the outpoint (`txid:vout`) and the instance id.
+ * Output: the new text. Other lines, comments included, do not change; old
+ * `outpoint` and `instance_id` lines of the `[machine]` table are replaced;
+ * the table is added at the end when it is not there.
+ */
+export function withMachine(
+    text: string,
+    outpoint: string,
+    instanceId: string
+): string {
+    const entries = [
+        `outpoint = ${JSON.stringify(outpoint)}`,
+        `instance_id = ${JSON.stringify(instanceId)}`,
+    ]
+    const lines = text.split('\n')
+    const header = lines.findIndex((l) => /^\s*\[machine\]\s*(#.*)?$/.test(l))
+    if (header < 0) {
+        const body =
+            text.length === 0 || text.endsWith('\n') ? text : text + '\n'
+        return `${body}\n[machine]\n${entries.join('\n')}\n`
+    }
+    let end = lines.findIndex((l, i) => i > header && TABLE_HEADER.test(l))
+    if (end < 0) end = lines.length
+    const kept = lines
+        .slice(header + 1, end)
+        .filter((l) => !/^\s*(outpoint|instance_id)\s*=/.test(l))
+    return [
+        ...lines.slice(0, header + 1),
+        ...entries,
+        ...kept,
+        ...lines.slice(end),
+    ].join('\n')
+}
+
+/**
+ * Write the machine outpoint and instance id into a config file.
+ * Input: the file path, the outpoint and the instance id.
+ * Output: none. The new text goes to a temporary file in the same folder
+ * with the old file mode (600 for a valid config), which then replaces the
+ * file by rename, so a crash never leaves half a file. Throws (with no
+ * secret in the message) when the new text is not valid TOML.
+ */
+export function saveMachine(
+    path: string,
+    outpoint: string,
+    instanceId: string
+): void {
+    const mode = statSync(path).mode & 0o777
+    const text = withMachine(readFileSync(path, 'utf8'), outpoint, instanceId)
+    try {
+        TOML.parse(text)
+    } catch {
+        throw new Error(
+            `config: cannot update ${path}: the result is not valid TOML`
+        )
+    }
+    const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`
+    try {
+        writeFileSync(temp, text, { mode: 0o600, flag: 'wx' })
+        chmodSync(temp, mode)
+        renameSync(temp, path)
+    } catch (e) {
+        try {
+            unlinkSync(temp)
+        } catch {
+            // the temporary file was not made or is already renamed
+        }
+        throw e
+    }
+}
+
+/**
+ * Hide the secrets of a configuration in a text.
+ * Input: any text (for example an error message from a library) and the
+ * configuration. Output: the text with every wif, rabin_p and rabin_q value
+ * replaced by "[hidden]".
+ */
+export function hideSecrets(text: string, cfg: GatewayConfig): string {
+    let result = text
+    for (const secret of [cfg.wif, cfg.rabinP, cfg.rabinQ])
+        if (secret) result = result.split(secret).join('[hidden]')
+    return result
 }

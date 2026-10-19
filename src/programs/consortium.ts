@@ -279,9 +279,21 @@ export function consortiumProgram(opts: ConsortiumOptions): string {
  */
 export function consortiumMemory(opts: ConsortiumOptions): string {
     validate(opts)
+    return sponsorMemory(opts.sponsorKeyHashHex)
+}
+
+/**
+ * Memory image with only roster slot 0 set: the sponsor's key hash and a
+ * zero payout. `consortiumMemory` uses it after it checks the options.
+ * Input: sha256 of the sponsor's Rabin public key bytes, 64 hex characters.
+ * Output: memory hex. Throws when the key hash is not 64 hex characters.
+ */
+export function sponsorMemory(sponsorKeyHashHex: string): string {
+    if (!/^[0-9a-fA-F]{64}$/.test(sponsorKeyHashHex))
+        throw new Error('sponsor key hash must be 64 hex characters')
     return withSlot(
         '00'.repeat(MEM_CELLS * CELL),
         0,
-        slotCells(opts.sponsorKeyHashHex.toLowerCase(), '00'.repeat(20))
+        slotCells(sponsorKeyHashHex.toLowerCase(), '00'.repeat(20))
     )
 }

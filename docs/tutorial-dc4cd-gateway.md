@@ -159,7 +159,7 @@ k17forth endorse --config sponsor.toml --member <public key of landowner 1> \
 The command checks that the sponsor key is in roster slot 0 of the machine. It signs the endorsement and relays it in one cycle. On the first endorsement it runs the first cycle of the program before the endorsement. It prints the txid and the slot:
 
 ```
-endorsed slot 1 txid 9be22d15495cc21f4986629477bb69aa9b5c8ac3d115f9f99c68eccc16accd3b lockTime 1792391346 (mtp 1792391347) -> 9be22d15...:0
+endorsed slot 2 txid c7a4616de5201977798d4e694d8bf4655458b032f2c14ce9ef9e8b70c2a6b979 lockTime 1792391346 (mtp 1792391347) -> c7a4616d...:0
 ```
 
 The machine enrols slots in order: 1, then 2, then 3. It refuses an endorsement after `enrolDeadline`. Enrol all landowners before that time.
@@ -231,6 +231,102 @@ A landowner earns nothing in these cases:
 - **Old outpoints.** The config file keeps the outpoint of the deployment. The tools follow the machine forward from it to the newest cycle.
 
 - **Rate limits.** The tools use the free WhatsOnChain API. They retry an answer of "Too Many Requests" and a transaction that is "Not Found" some seconds after its broadcast.
+
+## Worked example: three gateways on testnet
+
+We ran this tutorial on BSV testnet on 2026-10-19 with one sponsor and three landowners on one computer. All four config files used one wallet. Each landowner had their own Rabin key. Each gateway read one line from standard input, for example `echo "R 5231" | k17forth gateway run --config land1.toml --interval 10 --once`.
+
+The settings were `slots = 3`, `rounds = 2`, `period = 1800`, `epoch = 7`, a range of 0 to 10000, `bountyPerReading = 200` and `floor = 1000`. The value of `start` was the MTP plus 600 seconds. The deposit was 50,000 satoshis, with keeper rewards from 100 to 500 satoshis.
+
+The deployment:
+
+```
+outpoint 6e9ac92dab2a45a41c74ebb05e8efaa8df11606858c89499e22eaeef16b5ea27:0
+instance f8a87a7e6e631b314dff252b18dda0039cfbc83fbd15e2abdb481d70d4eeaaa5
+lastTime 1792391346 (median time past 1792391347)
+```
+
+The endorsements (the first one also ran the first cycle of the program):
+
+```
+cycle before the endorsement: cycle 4572d25f24b73e45cecc279b03bfdb202dca85192f3509f1779d4351b1fea9f3 lockTime 1792391346 (mtp 1792391347) reward 100
+endorsed slot 2 txid c7a4616de5201977798d4e694d8bf4655458b032f2c14ce9ef9e8b70c2a6b979 lockTime 1792391346 (mtp 1792391347)
+endorsed slot 3 txid ecd103145a9006203d680e2b594e5f108bd705e4c6266a7233a4d166eabdeb29 lockTime 1792391346 (mtp 1792391347)
+```
+
+Cycle `9be22d15...` endorsed slot 1. Its command stopped with "Not Found" after the broadcast, because WhatsOnChain did not yet have the new transaction. The tools now read the new cycle from the keeper and retry this error.
+
+Round 0, the last status line of each gateway:
+
+```
+round 0 slot 1 delivered 1 earned 200 sats: cycle 46a14d1f96895d741d121624faf36e9df90df1a7fc4bd68df7de662972e60b15 lockTime 1792391346 (mtp 1792391347) reward 100
+round 0 slot 2 delivered 1 earned 200 sats: cycle ce0171182bf44dc2b8fb7436e4ab1c211e0a1eb5464765684ca0bfffb8690f03 lockTime 1792391363 (mtp 1792391364) reward 117
+round 0 slot 3 delivered 1 earned 200 sats: cycle 6abce623ed0930f5020474f6fdf5cc13cc63397915f83cf8d3bb970e4e2307c9 lockTime 1792391994 (mtp 1792391995) reward 500
+```
+
+Round 0 closed at 1792393747. The MTP passed that time at 07:34 UTC, 18 minutes after the last reading. Then the sponsor keeper closed round 0 and opened round 1:
+
+```
+cycle 647b0e50bea3386cb3ed46058044ce89a8641288bdd2ea96a4a30f000b9f3f0c lockTime 1792394347 (mtp 1792394348) reward 500 (after resync)
+cycle d18b234cc306cb82524945a54108129f58d14054d53bba7d04ffe3902fe8dc82 lockTime 1792394367 (mtp 1792394368) reward 120
+skipped: needs witness
+```
+
+Round 1, the last status line of each gateway:
+
+```
+round 1 slot 1 delivered 2 earned 400 sats: cycle b6dcb8289377b276f2b0f9833e0bbe163e7d3caa01c480108ec3d426c6f94ee8 lockTime 1792394367 (mtp 1792394368) reward 100
+round 1 slot 2 delivered 2 earned 400 sats: cycle 76e93e276d9a4be9e28b7b5c32ad27cc0ca66142e5b41324f088b9c9aa60f63c lockTime 1792394367 (mtp 1792394368) reward 100
+round 1 slot 3 delivered 2 earned 400 sats: cycle 411459a808e33ccaae5a47115f9cdbe18603aa79fe4b061edd58d79ffd93d54b lockTime 1792394367 (mtp 1792394368) reward 100
+```
+
+Round 1 closed at 1792395547. The MTP passed that time at 08:40 UTC. The keeper then stopped the machine:
+
+```
+cycle 292e3272959a01167c2630b2920d464240e05b2b15c254e0545892c10fa3f254 lockTime 1792396087 (mtp 1792396088) reward 500 (after resync) -> halted
+```
+
+The output of `k17forth inspect 411459a808e33ccaae5a47115f9cdbe18603aa79fe4b061edd58d79ffd93d54b:0 --history --network testnet`, without the disassembly:
+
+```
+output 411459a808e33ccaae5a47115f9cdbe18603aa79fe4b061edd58d79ffd93d54b:0  45963 sats
+pc 382  lastTime 1792394367
+ds []
+rs []
+out [5231 4987 6102 5302 5010 6048]
+mem [0]=4 [2]=1 [3]=1 [4]=1
+roster 0 key=5a021e1f.. payout=0000000000000000000000000000000000000000
+roster 1 key=90ca1c85.. payout=4d6209433a8c33a20492502a27cb7b9358badcf2
+roster 2 key=9291e080.. payout=4d6209433a8c33a20492502a27cb7b9358badcf2
+roster 3 key=2b80e2eb.. payout=4d6209433a8c33a20492502a27cb7b9358badcf2
+instance f8a87a7e6e631b314dff252b18dda0039cfbc83fbd15e2abdb481d70d4eeaaa5
+beneficiary 4d6209433a8c33a20492502a27cb7b9358badcf2  reward min 100 slope 1 max 500
+history (20 cycles, oldest first):
+  4572d25f24b73e45cecc279b03bfdb202dca85192f3509f1779d4351b1fea9f3 lockTime 1792391346 reward 100 -> pc 12
+  9be22d15495cc21f4986629477bb69aa9b5c8ac3d115f9f99c68eccc16accd3b lockTime 1792391346 reward 100 -> pc 12
+  c7a4616de5201977798d4e694d8bf4655458b032f2c14ce9ef9e8b70c2a6b979 lockTime 1792391346 reward 100 -> pc 12
+  ecd103145a9006203d680e2b594e5f108bd705e4c6266a7233a4d166eabdeb29 lockTime 1792391346 reward 100 -> pc 12
+  37e492ce596c49281634614e6e0c2f0f3ad808509bdbf0d124676bb48fb414e5 lockTime 1792391346 reward 100 -> pc 91
+  a419dc3fea0c2f6288ddf338d4151deb0c66b0ac1b53fc05fe0149ca0172651b lockTime 1792391346 reward 100 -> pc 180
+  171bd98a0523042959dc8d5a126ba64fa3d1e2dbb115caab732f534c95433bf6 lockTime 1792391346 reward 100 -> pc 247
+  46a14d1f96895d741d121624faf36e9df90df1a7fc4bd68df7de662972e60b15 lockTime 1792391346 reward 100 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 1) -> pc 180
+  c014302caa5eb043fe39b4803c15e90e12fa0e48dcfde50a178edcb720149573 lockTime 1792391346 reward 100 -> pc 247
+  ce0171182bf44dc2b8fb7436e4ab1c211e0a1eb5464765684ca0bfffb8690f03 lockTime 1792391363 reward 117 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 2) -> pc 180
+  3ccddcd952121a966098883ec8e31d81a139902ba870b6672a13ceb10aaba50c lockTime 1792391363 reward 100 -> pc 247
+  6abce623ed0930f5020474f6fdf5cc13cc63397915f83cf8d3bb970e4e2307c9 lockTime 1792391994 reward 500 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 3) -> pc 180
+  647b0e50bea3386cb3ed46058044ce89a8641288bdd2ea96a4a30f000b9f3f0c lockTime 1792394347 reward 500 -> pc 293
+  d18b234cc306cb82524945a54108129f58d14054d53bba7d04ffe3902fe8dc82 lockTime 1792394367 reward 120 -> pc 382
+  0597e82d4fcb519174f86dabbd47a671591f2cfb66c291d877a9cca9985265f7 lockTime 1792394367 reward 100 -> pc 449
+  b6dcb8289377b276f2b0f9833e0bbe163e7d3caa01c480108ec3d426c6f94ee8 lockTime 1792394367 reward 100 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 1) -> pc 382
+  c02ba529b38723c71af05f7a3497a32031c4c2a9be6f728568666133563a9b6a lockTime 1792394367 reward 100 -> pc 449
+  76e93e276d9a4be9e28b7b5c32ad27cc0ca66142e5b41324f088b9c9aa60f63c lockTime 1792394367 reward 100 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 2) -> pc 382
+  7ff45fc59930d002b1dee8ce3fea8003215b41211b2933653534d17eee9d1c11 lockTime 1792394367 reward 100 -> pc 449
+  411459a808e33ccaae5a47115f9cdbe18603aa79fe4b061edd58d79ffd93d54b lockTime 1792394367 reward 100 payout 200 to 4d6209433a8c33a20492502a27cb7b9358badcf2 (slot 3) -> pc 382
+```
+
+The output log holds the six readings: three in round 0 and three in round 1. Each slot earned 400 satoshis. The keepers earned 3,337 satoshis in 21 cycles. The stop cycle refunded 45,463 satoshis to the sponsor. Together these are the deposit of 50,000 satoshis.
+
+The wallet paid 15,207 satoshis in fees for the whole example. This includes the deployment, 21 cycles and the fee splits of the wallet. From the deployment to the stop took 91 minutes. Most of that time was the wait for the MTP to pass the close of each round.
 
 ## Before you go to mainnet
 

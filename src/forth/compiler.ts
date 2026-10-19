@@ -31,6 +31,8 @@ export interface CompileResult {
     variables: Record<string, number>
     /** User-defined word names in definition order. */
     words: string[]
+    /** Number of leading tokens that are top-level code (before the final HALT). */
+    mainLength: number
 }
 
 /** Error raised for any source problem. `line` is the 1-based source line. */
@@ -406,6 +408,7 @@ export function compile(source: string): CompileResult {
         tokens: [...main, 'HALT', ...definitions],
         variables,
         words: defined,
+        mainLength: main.length,
     }
 }
 

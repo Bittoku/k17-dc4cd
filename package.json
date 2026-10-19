@@ -4,11 +4,15 @@
   "description": "DC4CD-style symbolic distributed processing ported to the K17+ stack machine on Bitcoin SV: roster-attested aggregation relay, fuzzy demo, Forth-subset compiler",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "k17forth": "dist/cli/k17forth.js"
+  },
   "scripts": {
     "build": "tsc",
     "clean": "rimraf dist",
     "test": "cross-env NETWORK=local mocha",
     "forth": "npx ts-node src/forth/cli.ts",
+    "k17forth": "ts-node src/cli/k17forth.ts",
     "lint": "eslint . --ext .ts --fix && prettier --write --ignore-unknown \"**/*\"",
     "lint-check": "eslint . --ext .ts && prettier --check --ignore-unknown \"**/*\""
   },

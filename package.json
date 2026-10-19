@@ -17,6 +17,7 @@
     "lint-check": "eslint . --ext .ts && prettier --check --ignore-unknown \"**/*\""
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "dotenv": "^16.6.1",
     "k17-vm": "file:../k17-vm",
     "scrypt-ts": "1.4.5",

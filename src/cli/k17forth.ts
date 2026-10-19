@@ -8,6 +8,7 @@
 import { compileCommand } from './compile'
 import { runCommand } from './run'
 import { startRepl } from './repl'
+import { inspectCommand } from './inspect'
 
 /** Where a command writes its text. */
 export interface CliIo {
@@ -29,15 +30,21 @@ export const USAGE = `usage: k17forth <command> [arguments]
 commands:
   compile <file.fs> [--json]              print hex, disassembly and cycle counts
   run <file.fs> --scenario <file.json>    run on the reference VM, one cycle per scenario entry
-  repl [file.fs]                          type Forth and see the machine after each line`
+  repl [file.fs]                          type Forth and see the machine after each line
+  inspect <txid[:vout]> [--history] [--json] [--network testnet|mainnet]
+                                          show a machine on the chain and its cycles`
 
 /**
  * Run the tool.
  * Input: arguments (without node and script name) and an output sink.
- * Output: exit code. The repl is asynchronous, so for `repl` this returns 0
- * when the session has started and the process stays open until it ends.
+ * Output: exit code, or a promise of it for `inspect`, which reads the chain.
+ * The repl is asynchronous, so for `repl` this returns 0 when the session has
+ * started and the process stays open until it ends.
  */
-export function main(argv: string[], io: CliIo = PROCESS_IO): number {
+export function main(
+    argv: string[],
+    io: CliIo = PROCESS_IO
+): number | Promise<number> {
     const [command, ...rest] = argv
     switch (command) {
         case 'compile':
@@ -46,6 +53,8 @@ export function main(argv: string[], io: CliIo = PROCESS_IO): number {
             return runCommand(rest, io)
         case 'repl':
             return startRepl(rest, io)
+        case 'inspect':
+            return inspectCommand(rest, io)
         default:
             io.err(USAGE)
             return 2
@@ -53,5 +62,7 @@ export function main(argv: string[], io: CliIo = PROCESS_IO): number {
 }
 
 if (require.main === module) {
-    process.exitCode = main(process.argv.slice(2))
+    Promise.resolve(main(process.argv.slice(2))).then((code) => {
+        process.exitCode = code
+    })
 }

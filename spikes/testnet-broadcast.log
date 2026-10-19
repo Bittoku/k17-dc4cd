@@ -4,8 +4,58 @@
       not also include their own bsv dependency.
 network=testnet dry=false provider=default
 funding address: mna7mVra5dB7xiJiR4GYTzu1dGkXGjz3Md
-WhatsOnChain balance: {"confirmed":9979637,"unconfirmed":0}
-provider.getBalance: {"confirmed":9979637,"unconfirmed":0}
-mediantime=1792383218 wall=1792386169 lag=2951s
-SPIKE FAILED: GorillapoolProvider ERROR: ERROR: 258: txn-mempool-conflict
-EXIT 1
+WhatsOnChain balance: {"confirmed":9979077,"unconfirmed":0}
+provider.getBalance: {"confirmed":9979077,"unconfirmed":0}
+mediantime=1792385643 wall=1792388072 lag=2429s
+deploy heartbeat: txid=f59dc364b6a8d4c62e533256f0c6da70e8206bf3f67502c30525120e15516e22 size=359128 ms=6698
+[hb-1] txid=4b275c3030af1450338dabe9fed1150d079084810f6cfeda2a91af72cb2a0142 size=719485 fee=720 broadcast_ms=4712 response=accepted (txid 4b275c3030af1450338dabe9fed1150d079084810f6cfeda2a91af72cb2a0142)
+[hb-2] txid=928a5f2975012309735ae53b07f8044368701647dbaaad7c705acf798441cce0 size=720591 fee=721 broadcast_ms=3793 response=accepted (txid 928a5f2975012309735ae53b07f8044368701647dbaaad7c705acf798441cce0)
+[hb-3] txid=7b03ae8ecb8f7dcd5e850fbf84a884c5531ca9688fceeed00ff82c89afe53a9a size=720671 fee=721 broadcast_ms=3643 response=accepted (txid 7b03ae8ecb8f7dcd5e850fbf84a884c5531ca9688fceeed00ff82c89afe53a9a)
+[hb-4] txid=14f84fb16a930154b4e3a3c3737817f5ec58695d3edc79296ead2d776e41043b size=720751 fee=721 broadcast_ms=4565 response=accepted (txid 14f84fb16a930154b4e3a3c3737817f5ec58695d3edc79296ead2d776e41043b)
+[hb-5] txid=7774dbc96aac61e7db9b9a537d3dd3434f29eb776526408f94141a6619d4b4e1 size=720831 fee=721 broadcast_ms=4766 response=accepted (txid 7774dbc96aac61e7db9b9a537d3dd3434f29eb776526408f94141a6619d4b4e1)
+[hb-6] txid=207bbee4e14ccf7010b1efc444d14fc0280a6312243d3543b7a68a6acb433f8a size=720911 fee=721 broadcast_ms=3440 response=accepted (txid 207bbee4e14ccf7010b1efc444d14fc0280a6312243d3543b7a68a6acb433f8a)
+[hb-7] txid=268838bc3c3e88e83f6729bfd9fbfb63f11b14c4bf93bbfd29f0c2b0cdfbe046 size=720992 fee=722 broadcast_ms=3962 response=accepted (txid 268838bc3c3e88e83f6729bfd9fbfb63f11b14c4bf93bbfd29f0c2b0cdfbe046)
+[hb-8] txid=188b5253567690b1f0f29fc22eff7abef0784bb2a2a3818c55c1eb066abe4e66 size=721073 fee=722 broadcast_ms=3907 response=accepted (txid 188b5253567690b1f0f29fc22eff7abef0784bb2a2a3818c55c1eb066abe4e66)
+[hb-9] txid=908b947b04ea84edd7f20f3717fe5ce7fc496b77ec5204172efe8954bd80f9af size=721154 fee=722 broadcast_ms=3617 response=accepted (txid 908b947b04ea84edd7f20f3717fe5ce7fc496b77ec5204172efe8954bd80f9af)
+[hb-10] txid=60ac85d7f1fd9018c6045d7e86061f20f911a98a7317280eb9ce96dc3c90272c size=721233 fee=722 broadcast_ms=3090 response=accepted (txid 60ac85d7f1fd9018c6045d7e86061f20f911a98a7317280eb9ce96dc3c90272c)
+deploy attest: txid=eb0e6a6bb717478301cb5a9fd7d9ff79e6e77c883288b3add84e427b5dbeceaa size=359902 ms=3612
+[at-1] txid=9600988648112c8c5874f1292f57662722f75013ca3519f2c1cb3bf865cb3e1f size=720992 fee=722 broadcast_ms=3434 response=accepted (txid 9600988648112c8c5874f1292f57662722f75013ca3519f2c1cb3bf865cb3e1f)
+[at-2] txid=49bee055bd28f9c12a5fb88be639370aff236d15b1e4c4b9ca515432e9b19954 size=361716 fee=362 broadcast_ms=2665 response=accepted (txid 49bee055bd28f9c12a5fb88be639370aff236d15b1e4c4b9ca515432e9b19954)
+
+=== SUMMARY ===
+{"label":"hb-1","txid":"4b275c3030af1450338dabe9fed1150d079084810f6cfeda2a91af72cb2a0142","size":719485,"fee":720,"ms":4712,"response":"accepted (txid 4b275c3030af1450338dabe9fed1150d079084810f6cfeda2a91af72cb2a0142)"}
+{"label":"hb-2","txid":"928a5f2975012309735ae53b07f8044368701647dbaaad7c705acf798441cce0","size":720591,"fee":721,"ms":3793,"response":"accepted (txid 928a5f2975012309735ae53b07f8044368701647dbaaad7c705acf798441cce0)"}
+{"label":"hb-3","txid":"7b03ae8ecb8f7dcd5e850fbf84a884c5531ca9688fceeed00ff82c89afe53a9a","size":720671,"fee":721,"ms":3643,"response":"accepted (txid 7b03ae8ecb8f7dcd5e850fbf84a884c5531ca9688fceeed00ff82c89afe53a9a)"}
+{"label":"hb-4","txid":"14f84fb16a930154b4e3a3c3737817f5ec58695d3edc79296ead2d776e41043b","size":720751,"fee":721,"ms":4565,"response":"accepted (txid 14f84fb16a930154b4e3a3c3737817f5ec58695d3edc79296ead2d776e41043b)"}
+{"label":"hb-5","txid":"7774dbc96aac61e7db9b9a537d3dd3434f29eb776526408f94141a6619d4b4e1","size":720831,"fee":721,"ms":4766,"response":"accepted (txid 7774dbc96aac61e7db9b9a537d3dd3434f29eb776526408f94141a6619d4b4e1)"}
+{"label":"hb-6","txid":"207bbee4e14ccf7010b1efc444d14fc0280a6312243d3543b7a68a6acb433f8a","size":720911,"fee":721,"ms":3440,"response":"accepted (txid 207bbee4e14ccf7010b1efc444d14fc0280a6312243d3543b7a68a6acb433f8a)"}
+{"label":"hb-7","txid":"268838bc3c3e88e83f6729bfd9fbfb63f11b14c4bf93bbfd29f0c2b0cdfbe046","size":720992,"fee":722,"ms":3962,"response":"accepted (txid 268838bc3c3e88e83f6729bfd9fbfb63f11b14c4bf93bbfd29f0c2b0cdfbe046)"}
+{"label":"hb-8","txid":"188b5253567690b1f0f29fc22eff7abef0784bb2a2a3818c55c1eb066abe4e66","size":721073,"fee":722,"ms":3907,"response":"accepted (txid 188b5253567690b1f0f29fc22eff7abef0784bb2a2a3818c55c1eb066abe4e66)"}
+{"label":"hb-9","txid":"908b947b04ea84edd7f20f3717fe5ce7fc496b77ec5204172efe8954bd80f9af","size":721154,"fee":722,"ms":3617,"response":"accepted (txid 908b947b04ea84edd7f20f3717fe5ce7fc496b77ec5204172efe8954bd80f9af)"}
+{"label":"hb-10","txid":"60ac85d7f1fd9018c6045d7e86061f20f911a98a7317280eb9ce96dc3c90272c","size":721233,"fee":722,"ms":3090,"response":"accepted (txid 60ac85d7f1fd9018c6045d7e86061f20f911a98a7317280eb9ce96dc3c90272c)"}
+{"label":"at-1","txid":"9600988648112c8c5874f1292f57662722f75013ca3519f2c1cb3bf865cb3e1f","size":720992,"fee":722,"ms":3434,"response":"accepted (txid 9600988648112c8c5874f1292f57662722f75013ca3519f2c1cb3bf865cb3e1f)"}
+{"label":"at-2","txid":"49bee055bd28f9c12a5fb88be639370aff236d15b1e4c4b9ca515432e9b19954","size":361716,"fee":362,"ms":2665,"response":"accepted (txid 49bee055bd28f9c12a5fb88be639370aff236d15b1e4c4b9ca515432e9b19954)"}
+
+polling confirmation of first and last txid
+  poll 1/10 4b275c3030af: in mempool/no height
+  poll 2/10 4b275c3030af: in mempool/no height
+  poll 3/10 4b275c3030af: in mempool/no height
+  poll 4/10 4b275c3030af: in mempool/no height
+  poll 5/10 4b275c3030af: in mempool/no height
+  poll 6/10 4b275c3030af: in mempool/no height
+  poll 7/10 4b275c3030af: in mempool/no height
+  poll 8/10 4b275c3030af: HTTP 429: <html>
+<head><title>429 Too Many Requests</title></head>
+<body><a href="https://api.whatsonchain.com/cdn-cgi
+  poll 9/10 4b275c3030af: in mempool/no height
+  poll 10/10 4b275c3030af: in mempool/no height
+first 4b275c3030af1450338dabe9fed1150d079084810f6cfeda2a91af72cb2a0142: unconfirmed after 10 min
+  poll 1/10 49bee055bd28: in mempool/no height
+  poll 2/10 49bee055bd28: in mempool/no height
+  poll 3/10 49bee055bd28: in mempool/no height
+  poll 4/10 49bee055bd28: in mempool/no height
+  poll 5/10 49bee055bd28: in mempool/no height
+  poll 6/10 49bee055bd28: in mempool/no height
+last 49bee055bd28f9c12a5fb88be639370aff236d15b1e4c4b9ca515432e9b19954: confirmed at height 1763962 after 990 s
+final WhatsOnChain balance: {"confirmed":9951646,"unconfirmed":0}
+EXIT 0

@@ -303,13 +303,22 @@ export async function deployCommand(
         io.out(`outpoint ${outpoint}`)
         io.out(`instance ${m.instanceId}`)
         io.out(`lastTime ${deployTime} (median time past ${mediantime})`)
-        saveMachine(flag('config') as string, outpoint, m.instanceId)
+        saveMachine(
+            flag('config') as string,
+            outpoint,
+            m.instanceId,
+            tree ? outpoint : undefined
+        )
         io.out(`wrote [machine] outpoint and instance_id to ${flag('config')}`)
         if (!tree) return 0
         // Publish the genesis roster from the sponsor's wallet.
-        const genesis = genesisRosterOf(m.instanceId, tree.rosterRoot, members)
         let inscription: string
         try {
+            const genesis = genesisRosterOf(
+                m.instanceId,
+                tree.rosterRoot,
+                members
+            )
             inscription = await broadcastInscription(
                 signer,
                 GENESIS_CONTENT_TYPE,

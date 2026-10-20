@@ -3,7 +3,8 @@
  *
  * Finishes a tree-mode deployment whose genesis inscription did not go out
  * (for example when the broadcast failed after `deploy` had deployed the
- * machine). It reads the machine at the `[machine] outpoint` of the config,
+ * machine). It reads the machine at `[machine] genesis_outpoint` (the
+ * deployment; `outpoint` when that is not set),
  * rebuilds the genesis roster from the member list, refuses when the list
  * does not give the machine's `rosterRoot`, then broadcasts the 1Sat
  * inscription from the config's wallet and records its outpoint as
@@ -101,14 +102,24 @@ export async function inscribeGenesisCommand(
         } catch {
             throw new Error('config: [wallet] wif is not a valid key')
         }
-        const { txid, vout } = parseOutpoint(cfg.machineOutpoint)
+        // The deployment outpoint holds the genesis state; `outpoint` may
+        // have moved on with the keeper.
+        const deployed = cfg.genesisOutpoint ?? cfg.machineOutpoint
+        const { txid, vout } = parseOutpoint(deployed)
         const tx = await provider.getTransaction(txid)
         const machine = K17Machine.fromTx(tx, vout) as K17Machine
+        if (
+            cfg.instanceId &&
+            cfg.instanceId.toLowerCase() !== machine.instanceId.toLowerCase()
+        )
+            throw new Error(
+                `config: [machine] instance_id does not match the machine at ${deployed}; nothing was broadcast`
+            )
         const rosterRoot = machine.rosterRoot
         const found = RosterMirror.fromMembers(members).root()
         if (found !== rosterRoot)
             throw new Error(
-                `${treePath} gives roster root ${found}, but the machine ${cfg.machineOutpoint} has ${rosterRoot}; nothing was broadcast`
+                `${treePath} gives roster root ${found}, but the machine ${deployed} has ${rosterRoot}; nothing was broadcast`
             )
         const genesis = genesisRosterOf(machine.instanceId, rosterRoot, members)
         const outpoint = await broadcastInscription(

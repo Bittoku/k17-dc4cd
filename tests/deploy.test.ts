@@ -358,6 +358,69 @@ describe('deploy --tree and inscribe-genesis', function () {
         expect(again.lines.join('\n')).to.contain('already inscribed')
     })
 
+    it('inscribe-genesis reads genesis_outpoint and refuses an instance_id mismatch', async () => {
+        const chain = new FlakyChain()
+        chain.failInscription = true
+        const config = configFile()
+        const list = membersFile(membersOf(3))
+        await deployCommand(
+            args(treeSource, config, [
+                '--tree',
+                list,
+                '--sponsor',
+                SPONSOR_HASH,
+            ]),
+            sink().io,
+            parts(chain)
+        )
+        chain.failInscription = false
+        const cfg = loadConfig(config)
+        expect(cfg.genesisOutpoint).to.equal(cfg.machineOutpoint)
+        // the machine outpoint moves on to a transaction that is no machine
+        const moved = join(dir, `moved-${counter++}.toml`)
+        writeFileSync(
+            moved,
+            readFileSync(config, 'utf8').replace(
+                /^outpoint = .*$/m,
+                `outpoint = "${'cd'.repeat(32)}:0"`
+            )
+        )
+        chmodSync(moved, 0o600)
+        const deps = {
+            provider: chain,
+            signer: new TestWallet(WALLET_KEY, chain),
+        }
+        // wrong instance id: refused, nothing broadcast
+        const wrongId = join(dir, `wrongid-${counter++}.toml`)
+        writeFileSync(
+            wrongId,
+            readFileSync(moved, 'utf8').replace(
+                /^instance_id = .*$/m,
+                `instance_id = "${'ee'.repeat(32)}"`
+            )
+        )
+        chmodSync(wrongId, 0o600)
+        const size = chain.txs.size
+        const bad = sink()
+        expect(
+            await inscribeGenesisCommand(
+                [wrongId, '--tree', list],
+                bad.io,
+                deps
+            )
+        ).to.equal(1)
+        expect(bad.lines.join('\n')).to.contain('instance_id')
+        expect(chain.txs.size).to.equal(size)
+        // genesis_outpoint is preferred over the moved outpoint
+        const ok = sink()
+        expect(
+            await inscribeGenesisCommand([moved, '--tree', list], ok.io, deps)
+        ).to.equal(0)
+        expect(loadConfig(moved).genesisInscription).to.match(
+            /^[0-9a-f]{64}:0$/
+        )
+    })
+
     it('inscribe-genesis refuses mainnet without the switch and takes no stray arguments', async () => {
         const mainnet = sink()
         expect(

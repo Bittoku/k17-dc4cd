@@ -69,6 +69,8 @@ export interface GatewayConfig {
     instanceId?: string
     /** Outpoint (`txid:vout`) of the genesis roster inscription (`[machine] genesis_inscription`). */
     genesisInscription?: string
+    /** Deployment outpoint (`txid:vout`), kept when the machine moves on (`[machine] genesis_outpoint`). */
+    genesisOutpoint?: string
     /** Roster slot of this gateway. */
     slot?: number
     /** Sign a reading even when the gateway thinks it is out of range. */
@@ -222,6 +224,7 @@ export function loadConfig(path: string): GatewayConfig {
         serial: optionalString('bridge', table(doc, 'bridge'), 'serial'),
         machineOutpoint: optionalString('machine', machine, 'outpoint'),
         instanceId: optionalString('machine', machine, 'instance_id'),
+        genesisOutpoint: optionalString('machine', machine, 'genesis_outpoint'),
         genesisInscription: optionalString(
             'machine',
             machine,
@@ -357,18 +360,22 @@ export function writeTableEntries(
 
 /**
  * Write the machine outpoint and instance id into a config file.
- * Input: the file path, the outpoint and the instance id.
+ * Input: the file path, the outpoint, the instance id and optionally the
+ * deployment outpoint, which is then also written as `genesis_outpoint`.
  * Output: none. Atomic, keeps the file mode (see `writeTableEntries`).
  */
 export function saveMachine(
     path: string,
     outpoint: string,
-    instanceId: string
+    instanceId: string,
+    genesisOutpoint?: string
 ): void {
-    writeTableEntries(path, 'machine', [
+    const entries: [string, string][] = [
         ['outpoint', outpoint],
         ['instance_id', instanceId],
-    ])
+    ]
+    if (genesisOutpoint) entries.push(['genesis_outpoint', genesisOutpoint])
+    writeTableEntries(path, 'machine', entries)
 }
 
 /**

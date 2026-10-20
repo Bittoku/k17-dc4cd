@@ -37,7 +37,7 @@ slot = 1
 
 Add `[bridge] serial = "/dev/ttyUSB0"` to read a serial device. Without it, the gateway reads standard input. Add `[attester] payout_address` to get the payments at an address that is not the wallet address.
 
-Tree mode: a machine that the sponsor deployed with a roster tree needs no slot. Set `[gateway] mode = "tree"` and give `[consortium]` the `start`, `period` and `rounds` of the machine (and `range_min` and `range_max` when the program checks a range); `slots` and `epoch` are not used. The sponsor admits the gateway key with `k17forth admit`, and the gateway finds its own leaf by key hash. It refuses to start when its key is not in the roster. Each reading is signed for the round of the lock time of the cycle that carries it, so a reading that waits for the next round or for the chain clock is signed again. The full tree tutorial is a separate document.
+Tree mode: a machine that the sponsor deployed with a roster tree needs no slot. Set `[gateway] mode = "tree"` and give `[consortium]` the `start`, `period` and `rounds` of the machine (and `range_min` and `range_max` when the program checks a range); `slots` and `epoch` are not used. The sponsor admits the gateway key with `k17forth admit`, and the gateway finds its own leaf by key hash. At start it checks that its key is in the roster and refuses to start when the roster shows that it is not. This check is fail-open: when the chain cannot be read, the gateway only warns and starts. It checks again before every relay, so a key that is missing then still stops the relay. Each reading is signed for the round of the lock time of the cycle that carries it, so a reading that waits for the next round or for the chain clock is signed again. The section "Tree-mode consortium" below walks through the whole flow.
 
 ## The two mote words
 
@@ -344,6 +344,104 @@ history (20 cycles, oldest first):
 The output log holds the six readings: three in round 0 and three in round 1. Each slot earned 400 satoshis. The keepers earned 3,337 satoshis in 21 cycles. The stop cycle refunded 45,463 satoshis to the sponsor. Together these are the deposit of 50,000 satoshis.
 
 The wallet paid 15,207 satoshis in fees for the whole example. This includes the deployment, 21 cycles and the fee splits of the wallet. From the deployment to the stop took 91 minutes. Most of that time was the wait for the MTP to pass the close of each round.
+
+## Tree-mode consortium
+
+A tree machine keeps its roster as the root of a Merkle tree. The roster can grow and shrink while the machine runs: the sponsor admits and removes members, and each member signs one reading in each round. The machine pays a member for one reading in a round. The roster is not in the machine. Every tool rebuilds it from the genesis inscription and the history of the machine.
+
+### 1. Write members.json
+
+List the members that the machine starts with. A file with no members is valid. Each member has a leaf `index` (0 to 65535), the `keyHash` of its Rabin public key, a 20-byte `payout` hash in hex and a `lastRound` (0 at the start):
+
+```json
+{
+  "members": [
+    {
+      "index": 0,
+      "keyHash": "<64 hex: sha256 of the public key>",
+      "payout": "<40 hex: public key hash of the payout address>",
+      "lastRound": 0
+    }
+  ]
+}
+```
+
+A member runs `k17forth gateway init` to make its key. The command prints the public key hash, the public key and the payout hash. The sponsor needs the key hash and the payout hash for `members.json`, and the public key for `admit`.
+
+### 2. Deploy
+
+Generate the program with `treeConsortiumSource` (`src/programs/treeConsortium.ts`) from `start`, `period`, `rounds`, `bountyPerReading` and an optional `range`. Save the Forth source as `tree.fs`. Deploy it with the roster and the sponsor key hash. Use a dead-man interval of 30 days for daily rounds:
+
+```bash
+k17forth deploy tree.fs --config sponsor.toml --deposit 100000 \
+  --reward-min 100 --slope 1 --reward-max 500 \
+  --tree members.json --sponsor <sponsor key hash> --dead-man 2592000
+```
+
+The command deploys the machine and publishes the roster as a 1Sat inscription. It writes `[machine] outpoint`, `genesis_outpoint` and `genesis_inscription` into `sponsor.toml`. If the inscription fails, run `k17forth inscribe-genesis sponsor.toml --tree members.json`.
+
+Rounds start at 1. Round r runs from `start + (r - 1) * period`. The machine ends at `start + rounds * period`.
+
+### 3. Check the genesis inscription
+
+Look at the machine with `inspect` and the inscription outpoint:
+
+```bash
+k17forth inspect <machine txid>:0 --genesis <genesis_inscription from sponsor.toml>
+```
+
+The output shows the roster root, the sponsor key hash prefix, the log hash and the member count. The member count must equal the number of entries in `members.json`. `inspect` stops with an error when the inscription does not belong to the machine.
+
+### 4. Admit a member
+
+The sponsor admits a member. The key file holds the public key as 768 hex characters (the output of `gateway init`) or as a decimal number:
+
+```bash
+k17forth admit sponsor.toml --member-key land4.pub --payout <payout address>
+```
+
+The command uses the lowest free leaf. Add `--index <n>` to choose one. A member admitted in round r gets `lastRound` r. It is paid from round r + 1. A member admitted before `start` can be paid in round 1. The command writes `[machine] tip_outpoint`, so later commands do not start from the deployment.
+
+### 5. Run the gateways in tree mode
+
+Each member sets `mode = "tree"` and the round settings of the machine:
+
+```toml
+[gateway]
+mode = "tree"
+
+[consortium]
+start = 1792390000
+period = 86400
+rounds = 30
+```
+
+Then it starts the gateway as before: `k17forth gateway run --config land4.toml --interval 60`. The gateway finds its leaf by key hash and signs each reading for the round of the lock time of the cycle that carries it. It reloads the roster before every relay.
+
+At start the gateway checks that its key is in the roster. This check is fail-open: when the chain cannot be read, the gateway only warns and starts, and it checks again before every relay. With `--once`, a reading that cannot go out now (waiting for the MTP, waiting for the next round, or a failed broadcast) is dropped with "run again after the next block", and the run exits 3. A tip outage keeps the reading.
+
+### 6. Remove a member
+
+```bash
+k17forth remove sponsor.toml --member-key land4.pub
+```
+
+Use `--index <n>` instead of `--member-key` to remove by leaf. The gateway of a removed member relays nothing after its next roster reload.
+
+### 7. Inspect the history
+
+```bash
+k17forth inspect <tip outpoint> --history --config sponsor.toml
+```
+
+The output lists:
+
+- the roster: leaf index, the first 12 hex characters of the key hash, the payout hash and `lastRound`;
+- every paid reading: round, member leaf, reading value and satoshis;
+- every admission and removal, with the roster seq after it;
+- `logHash: verified` when folding the paid readings gives the log hash of the machine.
+
+The machine folds each paid reading into its log hash: `logHash := sha256(logHash || cell(reading))`, from 32 zero bytes. `inspect` repeats this from the history. When the result differs from the machine, it prints `logHash: mismatch` and exits with code 1. It prints `logHash: not checked` when the program is not the tree generator, or when a cycle could not be replayed. `inspect` also exits with an error when the history does not rebuild the roster root and seq of the machine.
 
 ## Before you go to mainnet
 

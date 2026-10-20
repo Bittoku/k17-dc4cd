@@ -13,7 +13,7 @@
  * mirror) and `replayRoster` (build a mirror from genesis and the history).
  */
 
-import { SparseMerkleTree, encodeLeafPre } from 'k17-vm'
+import { SparseMerkleTree, decodeLeafPre, encodeLeafPre } from 'k17-vm'
 import { DecodedCycle } from './history'
 
 /** Number of leaves in the roster tree (depth 16). */
@@ -152,6 +152,24 @@ export class RosterMirror {
     /** Output: the current tree root (64 hex). */
     root(): string {
         return this.tree.root()
+    }
+
+    /**
+     * Output: every member, in leaf order, with the fields of its leaf
+     * (`keyHash` 64 hex, `payout` 40 hex, `lastRound`).
+     */
+    members(): GenesisRoster['members'] {
+        return [...this.keyAt.keys()]
+            .sort((a, b) => a - b)
+            .map((index) => {
+                const leaf = decodeLeafPre(this.tree.get(index) as string)
+                return {
+                    index,
+                    keyHash: leaf.keyHashHex,
+                    payout: leaf.payoutHex,
+                    lastRound: Number(leaf.lastRound),
+                }
+            })
     }
 
     /** Output: the current `rosterSeq` (admissions and removals so far). */

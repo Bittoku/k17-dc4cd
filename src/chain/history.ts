@@ -63,6 +63,12 @@ export interface DecodedCycle {
      */
     treeOp: TreeOp
     /**
+     * The witness cells that the cycle read with IN, in order (empty when the
+     * unlocking script is unreadable). In the tree generator a reading cycle
+     * has the witness `[0, reading]`.
+     */
+    witness: bigint[]
+    /**
      * The tree arguments of the unlocking script (leafPre, proof, leafIndex);
      * undefined for a 7-chunk (v2) script or an unreadable one.
      */
@@ -367,6 +373,7 @@ export async function walkHistory(
             halted: !after.machine,
             state: after.machine,
             treeOp: replay ? replay.treeOp : 'none',
+            witness: unlocking ? decodeCells(unlocking.witnessHex) : [],
             tree: unlocking?.tree,
             rosterRoot: after.instance
                 ? after.instance.rosterRoot

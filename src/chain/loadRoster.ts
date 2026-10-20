@@ -20,6 +20,16 @@ import { TxSource, parseOutpoint, walkHistory } from './history'
 import { GenesisRoster, RosterMirror, replayRoster } from './roster'
 import { parseInscription } from './inscription'
 
+/**
+ * The configuration fields that `loadRoster` reads: the machine outpoints and
+ * the genesis inscription. A full `GatewayConfig` fits; `inspect` builds one
+ * from its flags.
+ */
+export type RosterConfig = Pick<
+    GatewayConfig,
+    'machineOutpoint' | 'tipOutpoint' | 'genesisOutpoint' | 'genesisInscription'
+>
+
 /** What `loadRoster` reads from. */
 export interface LoadRosterDeps {
     /** Transaction source (a provider). */
@@ -65,7 +75,7 @@ async function machineAt(
  * machine's.
  */
 export async function loadRoster(
-    cfg: GatewayConfig,
+    cfg: RosterConfig,
     deps: LoadRosterDeps
 ): Promise<{ mirror: RosterMirror; machine: K17Machine }> {
     const tip = deps.outpoint ?? startOutpoint(cfg)

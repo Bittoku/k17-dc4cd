@@ -514,7 +514,9 @@ export function saveMachine(
  * commands all start here, so a long history is not walked from the
  * deployment on every run.
  */
-export function startOutpoint(cfg: GatewayConfig): string | undefined {
+export function startOutpoint(
+    cfg: Pick<GatewayConfig, 'machineOutpoint' | 'tipOutpoint'>
+): string | undefined {
     return cfg.tipOutpoint ?? cfg.machineOutpoint
 }
 

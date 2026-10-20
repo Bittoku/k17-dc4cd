@@ -39,6 +39,14 @@ export interface DecodedMachine {
     /** Dead-man interval in seconds (v3.1); 0n means off. */
     deadMan: bigint
     instanceId: string
+    /** Roster tree root (64 hex; tree-mode machines, else the empty root). */
+    rosterRoot: string
+    /** Number of admissions and removals so far. */
+    rosterSeq: bigint
+    /** Key hash of the sponsor (64 hex; all zero when the machine has no sponsor). */
+    sponsorKeyHash: string
+    /** Hash chain over the OUTH values, 64 hex (32 zero bytes at deployment). */
+    logHash: string
 }
 
 /** Result of `decodeMachine`: the machine, or the reason it is not one. */
@@ -120,6 +128,10 @@ export function decodeInstance(lockingScriptHex: string): DecodedInstance {
             rewardMax: instance.rewardMax,
             deadMan: instance.deadMan,
             instanceId: instance.instanceId,
+            rosterRoot: instance.rosterRoot,
+            rosterSeq: instance.rosterSeq,
+            sponsorKeyHash: instance.sponsorKeyHash,
+            logHash: instance.logHash,
         },
     }
 }

@@ -6,9 +6,17 @@
  * disassembly. With `--history` it also walks back to the deployment and
  * prints every cycle. `--json` prints one JSON object instead (big numbers
  * as strings).
+ *
+ * Tree-mode machines (a Merkle roster and a sponsor) also get the tree
+ * state: roster root, seq, sponsor, log hash and, when the genesis
+ * inscription is given (`--genesis` or `--config`), the member count. With
+ * `--history` they get the roster table, every paid reading, every admission
+ * and removal, and a check of the log hash against the readings.
  */
 
+import { createHash } from 'crypto'
 import type { Provider } from 'scrypt-ts'
+import { HAS_OPERAND, Op, decodeLeafPre, encodeCell } from 'k17-vm'
 import { memoryCells } from './scenario'
 import type { CliIo } from './k17forth'
 import { DecodedMachine, decodeMachine } from '../chain/decode'
@@ -19,11 +27,178 @@ import {
     walkHistory,
 } from '../chain/history'
 import { makeProvider } from '../chain/provider'
-import type { NetworkName } from '../chain/config'
+import { NetworkName, loadConfig } from '../chain/config'
+import { loadRoster } from '../chain/loadRoster'
+import type { RosterMirror } from '../chain/roster'
+import { isTreeProgram } from '../forth/compiler'
 
 /** Help text of the inspect sub-command. */
 export const INSPECT_USAGE =
-    'usage: k17forth inspect <txid[:vout]> [--history] [--json] [--network testnet|mainnet]'
+    'usage: k17forth inspect <txid[:vout]> [--history] [--json] [--genesis <txid[:vout]> | --config <toml>] [--network testnet|mainnet]'
+
+/** 32 zero bytes as hex: the log hash of a new machine, and "no sponsor". */
+const ZERO_HASH = '00'.repeat(32)
+
+/** One paid reading of a tree machine. */
+export interface TreeReading {
+    txid: string
+    /** Round of the reading (the member's new `lastRound`). */
+    round: number
+    /** Leaf index of the member that was paid. */
+    member: number
+    /** The reading value (second witness cell of the cycle). */
+    reading: bigint
+    /** Satoshis paid to the member. */
+    satoshis: number
+}
+
+/** One admission or removal of a tree machine. */
+export interface TreeAdmin {
+    txid: string
+    op: 'admit' | 'remove'
+    /** `rosterSeq` after the cycle. */
+    seq: bigint
+    /** Leaf index that was written or cleared. */
+    leaf: number
+    /** Key hash (64 hex) and payout (40 hex) of an admitted member. */
+    keyHash?: string
+    payout?: string
+}
+
+/** Result of the log-hash check. */
+export interface LogHashCheck {
+    status: 'verified' | 'mismatch' | 'not checked'
+    /** Why the check did not run, or what differed. */
+    detail?: string
+}
+
+/**
+ * Count the opcodes of a program, skipping operand bytes.
+ * Input: program hex. Output: opcode byte to count.
+ */
+function opcodeCounts(progHex: string): Map<number, number> {
+    const counts = new Map<number, number>()
+    const bytes = Buffer.from(progHex, 'hex')
+    for (let i = 0; i < bytes.length; i++) {
+        counts.set(bytes[i], (counts.get(bytes[i]) ?? 0) + 1)
+        if (HAS_OPERAND.has(bytes[i])) i += 4
+    }
+    return counts
+}
+
+/**
+ * Check the log hash of a tree machine against its paid readings.
+ * The tree generator folds the reading of each paid reading cycle with one
+ * OUTH, so folding those readings from 32 zero bytes must give the machine's
+ * `logHash`. A program that does not have exactly one each of MEMBER,
+ * ATTESTM, PAYLEAF and OUTH is not the generator's shape, and a cycle that
+ * could not be replayed hides its reading; both give "not checked".
+ * Input: the machine, the cycles (oldest first) and the readings. Output:
+ * the check result.
+ */
+export function checkLogHash(
+    machine: DecodedMachine,
+    cycles: DecodedCycle[],
+    readings: TreeReading[]
+): LogHashCheck {
+    const counts = opcodeCounts(machine.prog)
+    for (const op of [Op.MEMBER, Op.ATTESTM, Op.PAYLEAF, Op.OUTH])
+        if (counts.get(op) !== 1)
+            return {
+                status: 'not checked',
+                detail: 'program is not the tree generator',
+            }
+    const hidden = cycles.find((c) => c.ambiguous)
+    if (hidden)
+        return {
+            status: 'not checked',
+            detail: `cycle ${hidden.txid} could not be replayed`,
+        }
+    let folded = ZERO_HASH
+    for (const { reading } of readings)
+        folded = createHash('sha256')
+            .update(Buffer.from(folded + encodeCell(reading), 'hex'))
+            .digest('hex')
+    return folded === machine.logHash
+        ? { status: 'verified' }
+        : {
+              status: 'mismatch',
+              detail: `readings give ${folded}, the machine has ${machine.logHash}`,
+          }
+}
+
+/**
+ * Paid readings, admissions and removals found in the cycles.
+ * A paid reading is a MEMBER cycle that wrote a leaf; its round is the new
+ * leaf's `lastRound` and its reading is the second witness cell.
+ * Input: the cycles, oldest first. Output: both lists, in cycle order.
+ */
+export function treeEvents(cycles: DecodedCycle[]): {
+    readings: TreeReading[]
+    admin: TreeAdmin[]
+} {
+    const readings: TreeReading[] = []
+    const admin: TreeAdmin[] = []
+    for (const c of cycles) {
+        if (c.ambiguous || !c.tree) continue
+        const leaf = Number(c.tree.leafIndex)
+        if (c.treeOp === 'member' && c.leafAfter && c.payout)
+            readings.push({
+                txid: c.txid,
+                round: Number(decodeLeafPre(c.leafAfter).lastRound),
+                member: leaf,
+                reading: c.witness[1] ?? 0n,
+                satoshis: c.payout.satoshis,
+            })
+        else if (c.treeOp === 'admit' && c.leafAfter) {
+            const fields = decodeLeafPre(c.leafAfter)
+            admin.push({
+                txid: c.txid,
+                op: 'admit',
+                seq: c.rosterSeq,
+                leaf,
+                keyHash: fields.keyHashHex,
+                payout: fields.payoutHex,
+            })
+        } else if (c.treeOp === 'remove')
+            admin.push({ txid: c.txid, op: 'remove', seq: c.rosterSeq, leaf })
+    }
+    return { readings, admin }
+}
+
+/** Tree machines have a sponsor or use the tree instructions. */
+function isTreeMachine(machine: DecodedMachine): boolean {
+    return isTreeProgram(machine.prog) || machine.sponsorKeyHash !== ZERO_HASH
+}
+
+/** Text lines for the roster mirror: a header and one line per member. */
+function rosterLines(mirror: RosterMirror): string[] {
+    const members = mirror.members()
+    return [
+        `roster (${members.length} member${members.length === 1 ? '' : 's'}):`,
+        ...members.map(
+            (m) =>
+                `  [${m.index}] key=${m.keyHash.slice(0, 12)}.. payout=${
+                    m.payout
+                } lastRound ${m.lastRound}`
+        ),
+    ]
+}
+
+/** Text lines for the tree state of a machine (no history needed). */
+function treeStateLines(
+    machine: DecodedMachine,
+    mirror?: RosterMirror
+): string[] {
+    return [
+        `tree: roster root ${machine.rosterRoot} seq ${machine.rosterSeq}`,
+        `tree: sponsor ${machine.sponsorKeyHash.slice(0, 12)}..`,
+        `tree: logHash ${machine.logHash}`,
+        mirror
+            ? `tree: ${mirror.members().length} members`
+            : 'tree: members not shown (give --genesis <txid[:vout]> or --config <toml>)',
+    ]
+}
 
 /**
  * Text lines that describe a machine.
@@ -111,11 +286,30 @@ function toJson(value: unknown): string {
 }
 
 /**
+ * Outpoint of the deployment output of a machine, for `loadRoster`.
+ * Input: the chain, the cycles from `walkHistory` (oldest first) and the
+ * outpoint given to inspect. Output: the output that the oldest cycle spent,
+ * or the given outpoint when there is no cycle (it is the deployment).
+ */
+async function deploymentOf(
+    chain: TxSource,
+    cycles: DecodedCycle[],
+    given: string
+): Promise<string> {
+    if (cycles.length === 0) return given
+    const first = await chain.getTransaction(cycles[0].txid)
+    return `${first.inputs[0].prevTxId.toString('hex')}:${
+        first.inputs[0].outputIndex
+    }`
+}
+
+/**
  * Run the inspect sub-command.
  * Input: arguments after `inspect`, an output sink, and optionally a
  * transaction source (default: the chain provider of `--network`, testnet if
  * not given). Output: exit code: 0 on success, 1 when the output is not a
- * machine or the chain cannot be read, 2 on wrong arguments.
+ * machine, the chain cannot be read, the roster does not load, or the log
+ * hash of a tree machine does not match its readings; 2 on wrong arguments.
  */
 export async function inspectCommand(
     args: string[],
@@ -125,10 +319,22 @@ export async function inspectCommand(
     const json = args.includes('--json')
     const history = args.includes('--history')
     let network: NetworkName = 'testnet'
+    let genesisArg: string | undefined
+    let configPath: string | undefined
     const positional: string[] = []
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]
         if (arg === '--json' || arg === '--history') continue
+        if (arg === '--genesis' || arg === '--config') {
+            const value = args[++i]
+            if (!value) {
+                io.err(INSPECT_USAGE)
+                return 2
+            }
+            if (arg === '--genesis') genesisArg = value
+            else configPath = value
+            continue
+        }
         if (arg === '--network') {
             const value = args[++i]
             if (value !== 'testnet' && value !== 'mainnet') {
@@ -163,29 +369,95 @@ export async function inspectCommand(
             io.err(`${outpoint.txid}:${outpoint.vout}: ${decoded.reason}`)
             return 1
         }
-        const cycles = history
-            ? await walkHistory(chain, positional[0])
-            : undefined
+        const machine = decoded.machine
+        const isTree = isTreeMachine(machine)
+        // A tree machine needs its history for the roster and the checks.
+        const cycles =
+            history || (isTree && (genesisArg || configPath))
+                ? await walkHistory(chain, positional[0])
+                : undefined
+        let mirror: RosterMirror | undefined
+        if (isTree && (genesisArg || configPath)) {
+            const saved = configPath ? loadConfig(configPath) : undefined
+            const genesisInscription = saved?.genesisInscription ?? genesisArg
+            const genesisOutpoint =
+                saved?.genesisOutpoint ??
+                (await deploymentOf(chain, cycles ?? [], positional[0]))
+            mirror = (
+                await loadRoster(
+                    {
+                        machineOutpoint: positional[0],
+                        genesisInscription,
+                        genesisOutpoint,
+                    },
+                    { provider: chain }
+                )
+            ).mirror
+        }
+        const events = isTree && history ? treeEvents(cycles ?? []) : undefined
+        const logCheck =
+            events && cycles
+                ? checkLogHash(machine, cycles, events.readings)
+                : undefined
+        const exitCode = logCheck?.status === 'mismatch' ? 1 : 0
         if (json) {
             io.out(
                 toJson({
                     outpoint,
                     satoshis: output.satoshis,
-                    machine: decoded.machine,
-                    ...(cycles ? { history: cycles } : {}),
+                    machine,
+                    ...(cycles && history ? { history: cycles } : {}),
+                    ...(isTree
+                        ? {
+                              tree: {
+                                  members: mirror?.members(),
+                                  ...events,
+                                  logHashCheck: logCheck,
+                              },
+                          }
+                        : {}),
                 })
             )
-            return 0
+            return exitCode
         }
         io.out(
             `output ${outpoint.txid}:${outpoint.vout}  ${output.satoshis} sats`
         )
-        for (const line of machineLines(decoded.machine)) io.out(line)
-        if (cycles) {
+        for (const line of machineLines(machine)) io.out(line)
+        if (isTree)
+            for (const line of treeStateLines(machine, mirror)) io.out(line)
+        if (cycles && history) {
             io.out(`history (${cycles.length} cycles, oldest first):`)
             for (const cycle of cycles) io.out('  ' + cycleLine(cycle))
         }
-        return 0
+        if (events && logCheck) {
+            if (mirror) for (const line of rosterLines(mirror)) io.out(line)
+            else
+                io.out(
+                    'roster: not shown (give --genesis <txid[:vout]> or --config <toml>)'
+                )
+            io.out(`readings (${events.readings.length}):`)
+            for (const r of events.readings)
+                io.out(
+                    `  round ${r.round} member ${r.member} reading ${r.reading} paid ${r.satoshis} sats (${r.txid})`
+                )
+            io.out(`admissions and removals (${events.admin.length}):`)
+            for (const a of events.admin)
+                io.out(
+                    a.op === 'admit'
+                        ? `  seq ${a.seq} admit leaf ${
+                              a.leaf
+                          } key=${a.keyHash?.slice(0, 12)}.. payout=${
+                              a.payout
+                          } (${a.txid})`
+                        : `  seq ${a.seq} remove leaf ${a.leaf} (${a.txid})`
+                )
+            io.out(
+                `logHash: ${logCheck.status}` +
+                    (logCheck.detail ? ` (${logCheck.detail})` : '')
+            )
+        }
+        return exitCode
     } catch (e) {
         io.err(`inspect: ${(e as Error).message}`)
         return 1

@@ -293,6 +293,15 @@ describe('RosterMirror', function () {
             expect(bad((g) => (g.members[0].lastRound = 1.5))).to.throw(
                 /lastRound/
             )
+            expect(bad((g) => (g.members[0].lastRound = 2 ** 32))).to.throw(
+                /lastRound/
+            )
+            expect(bad((g) => (g.instanceId = 'abc'))).to.throw(/instanceId/)
+            expect(
+                bad(
+                    (g) => ((g as unknown as { members: unknown }).members = {})
+                )
+            ).to.throw(/array/)
         })
     })
 
@@ -414,9 +423,65 @@ describe('RosterMirror', function () {
             ).to.throw(/ambiguous/)
         })
 
+        it('throws on a seq-only mismatch and on an admission into an occupied leaf', () => {
+            const mirror = RosterMirror.fromGenesis(built.genesis)
+            expect(() =>
+                mirror.apply({ ...cycles[0], rosterSeq: 7n })
+            ).to.throw(/seq 1, the machine has .* seq 7/)
+            expect(mirror.seq()).to.equal(0n)
+            mirror.apply(cycles[0])
+            expect(() => mirror.apply(cycles[0])).to.throw(
+                /admission into occupied leaf/
+            )
+        })
+
+        it('leaves the tree alone for MEMBER without PAYLEAF', async () => {
+            const genesis = genesisAt([0, 1, 2])
+            const m0 = newMachine(
+                assemble(['MEMBER', 'DROP', 'YIELD', 'HALT']),
+                ECON,
+                T0,
+                undefined,
+                undefined,
+                undefined,
+                {
+                    rosterRoot: genesis.rosterRoot,
+                    sponsorKeyHash: keyHash(sponsor.pub),
+                }
+            )
+            await m0.connect(getDefaultSigner())
+            const deployTx = await m0.deploy(FUNDING)
+            const mirror = RosterMirror.fromGenesis({
+                ...genesis,
+                instanceId: m0.instanceId,
+            })
+            const r = await cycle(
+                m0,
+                BigInt(FUNDING),
+                T0 + 60n,
+                [],
+                undefined,
+                {},
+                mirror.proofFor(PAID_INDEX)
+            )
+            const chain = new MemoryChain()
+            chain.txs.set(deployTx.id, deployTx)
+            chain.txs.set(r.tx.id, r.tx)
+            const [only] = await walkHistory(chain, r.tx.id)
+            expect(only.treeOp).to.equal('member')
+            expect(only.leafAfter).to.equal(undefined)
+            expect(only.rosterRoot).to.equal(genesis.rosterRoot)
+            expect(only.rosterSeq).to.equal(0n)
+            mirror.apply(only)
+            expect(mirror.root()).to.equal(genesis.rosterRoot)
+            expect(mirror.seq()).to.equal(0n)
+        })
+
         it('throws when the genesis does not match the chain', () => {
             const wrong = genesisAt([0, 1, 3], built.genesis.instanceId)
-            expect(() => replayRoster(wrong, cycles)).to.throw()
+            expect(() => replayRoster(wrong, cycles)).to.throw(
+                /admission into occupied leaf 3/
+            )
         })
     })
 })

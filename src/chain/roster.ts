@@ -70,9 +70,16 @@ export class RosterMirror {
         if (!/^[0-9a-fA-F]{64}$/.test(g.rosterRoot)) {
             throw new Error('rosterRoot must be 64 hex characters')
         }
+        if (!/^[0-9a-fA-F]{64}$/.test(g.instanceId)) {
+            throw new Error('instanceId must be 64 hex characters')
+        }
+        if (!Array.isArray(g.members)) {
+            throw new Error('members must be an array')
+        }
         const mirror = new RosterMirror()
         for (const member of g.members) {
             if (
+                typeof member.index !== 'number' ||
                 !Number.isInteger(member.index) ||
                 member.index < 0 ||
                 member.index >= LEAF_COUNT
@@ -89,9 +96,13 @@ export class RosterMirror {
                     `member ${member.index}: payout must be 40 hex characters`
                 )
             }
-            if (!Number.isInteger(member.lastRound) || member.lastRound < 0) {
+            if (
+                !Number.isSafeInteger(member.lastRound) ||
+                member.lastRound < 0 ||
+                member.lastRound > 0xffffffff
+            ) {
                 throw new Error(
-                    `member ${member.index}: lastRound must be an integer, 0 or more`
+                    `member ${member.index}: lastRound must be an integer from 0 to 4294967295`
                 )
             }
             const key = member.keyHash.toLowerCase()
@@ -178,7 +189,8 @@ export class RosterMirror {
      * raw arguments alone: an admission writes the new member, a payment
      * writes the member's new lastRound, a removal clears the leaf. The
      * mirror then checks its root and seq against the cycle's state after
-     * the cycle. On any mismatch it restores its old state and throws.
+     * the cycle. For a halted cycle the post-cycle root comes from the
+     * replay itself, so that check shows self-consistency only. On any mismatch it restores its old state and throws.
      * Input: a decoded cycle from `walkHistory`, oldest first. Output: none.
      * Throws for an ambiguous cycle, a tree cycle without tree arguments, an
      * admission into an occupied leaf, a removal of an empty leaf, or a root
@@ -235,7 +247,10 @@ export class RosterMirror {
         const oldKey = this.keyAt.get(index)
         if (oldKey !== undefined) {
             this.keyAt.delete(index)
-            this.indexByKey.delete(oldKey)
+            // a key at two leaves keeps its other mapping
+            if (this.indexByKey.get(oldKey) === index) {
+                this.indexByKey.delete(oldKey)
+            }
         }
         this.tree.set(index, leafPre)
         if (leafPre !== '') {

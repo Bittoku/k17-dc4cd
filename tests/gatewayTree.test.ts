@@ -24,7 +24,7 @@ import {
 import { GatewayConfig, loadConfig, saveAttesterKey } from '../src/chain/config'
 import { loadRoster } from '../src/chain/loadRoster'
 import { GenesisRoster } from '../src/chain/roster'
-import { removeCommand } from '../src/cli/admit'
+import { admitCommand, removeCommand } from '../src/cli/admit'
 import { deployCommand } from '../src/cli/deploy'
 import { gatewayCommand } from '../src/cli/gateway'
 import { MemberAttester } from '../src/gateway/attester'
@@ -489,6 +489,71 @@ describe('gateway: tree mode', function () {
         )
         // The public key of the gateway is what the sponsor admits.
         expect(pubKeyBytes(alice.pub)).to.have.length.greaterThan(100)
+    })
+
+    it('does not call a member removed when the tip cannot be followed, and relays once it can', async () => {
+        const { chain, config } = await deployTree()
+        // The sponsor admits a new member before round 1; the new member's
+        // config still names the deployment as its last known tip.
+        clockBase = START - 600
+        const sponsorCfg = file(readFileSync(config, 'utf8'))
+        saveAttesterKey(sponsorCfg, sponsorKey.priv.p, sponsorKey.priv.q)
+        const admitted = sink()
+        expect(
+            await admitCommand(
+                [
+                    sponsorCfg,
+                    '--member-key',
+                    file(pubKeyBytes(outsider.pub)),
+                    '--payout',
+                    PAYOUT_ADDRESS.toString(),
+                ],
+                admitted.io,
+                {
+                    provider: chain,
+                    signer: new TestWallet(WALLET_KEY, chain),
+                    keeper: keeperOptions(chain),
+                    now: clockOf(chain),
+                }
+            )
+        ).to.equal(0)
+        clockBase = START + 100
+        const path = memberConfig(config, outsider)
+        let lookupDown = true
+        const lines: string[] = []
+        const options = keeperOptions(chain)
+        const gateway = new Gateway(
+            loadConfig(path),
+            chain,
+            new TestWallet(WALLET_KEY, chain),
+            {
+                bridge: emptyBridge(),
+                keeper: {
+                    ...options,
+                    spentBy: async (op) => {
+                        if (lookupDown) throw new Error('lookup down')
+                        return options.spentBy(op)
+                    },
+                },
+                now: clockOf(chain),
+                intervalMs: 20,
+                out: (line) => lines.push(line),
+                configPath: path,
+            }
+        )
+        // Start: only a warning, no refusal.
+        expect(await gateway.run()).to.equal(0)
+        expect(lines.join('\n')).to.contain('could not check the roster')
+        const sent = chain.cycleBroadcasts
+        const kept = await gateway.handleReading(5000)
+        expect(kept).to.contain('kept')
+        expect(kept).to.not.contain('not in the roster')
+        expect(gateway.pendingReading).to.equal(5000)
+        expect(chain.cycleBroadcasts).to.equal(sent)
+        lookupDown = false
+        expect(await gateway.tickIdle()).to.contain('delivered 1')
+        expect(gateway.pendingReading).to.equal(undefined)
+        expect(chain.verifyMachineSpends()).to.be.at.least(2)
     })
 
     it('refuses a reading out of range and sends nothing', async () => {

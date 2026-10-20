@@ -42,7 +42,14 @@
  * failure reports the reason). A gateway whose key is not in the roster
  * refuses to start (`run` returns NOT_IN_ROSTER); one that is removed later
  * refuses each reading and relays nothing, as a slot gateway does when its
- * slot is emptied. After a relay it writes `[machine] tip_outpoint` (needs
+ * slot is emptied. The start check is fail-open: when the chain cannot be
+ * read (or the sync of the tip fails) `run` only warns and goes on, and
+ * membership is checked again before every relay; only a roster loaded after
+ * a successful sync may conclude "not in the roster" (after a failed sync the
+ * reading is kept). Data freshness: a kept reading is signed and paid in the
+ * round of the cycle that carries it, so a value measured in round r may be
+ * paid in round r + 1; one value is kept and a newer reading replaces it.
+ * After a relay it writes `[machine] tip_outpoint` (needs
  * `GatewayOptions.configPath`).
  *
  * Each tick and each reading gives one status line: the round, the slot,
@@ -186,6 +193,8 @@ export class Gateway {
     /** A reading kept because the chain time could not be read. */
     private unsigned?: number
     private readonly deliveredRounds = new Set<number>()
+    /** Tree mode: true once a reading cycle was broadcast (for `once`). */
+    private treeDelivered = false
     private halted = false
     /** The latest machine outpoint, kept after a halt for the history walk. */
     private latest: string
@@ -402,8 +411,10 @@ export class Gateway {
                         await this.queue
                     }
                     // The cycle after the attest cycle pays the slot.
-                    deliveredOnce = this.deliveredRounds.size > deliveredBefore
-                    if (deliveredOnce && !this.halted)
+                    deliveredOnce = this.member
+                        ? this.treeDelivered
+                        : this.deliveredRounds.size > deliveredBefore
+                    if (deliveredOnce && !this.halted && !this.member)
                         await this.enqueue(() => this.tickIdle(), stop)
                     break
                 }
@@ -527,8 +538,11 @@ export class Gateway {
     private async preflight(): Promise<string | undefined> {
         const member = this.member as MemberAttester
         try {
-            const { mirror } = await this.freshRoster()
+            const { mirror, note } = await this.freshRoster()
             const index = mirror.indexOf(member.keyHashHex)
+            // A failed sync means the roster may be older than the admission.
+            if (index === undefined && note)
+                throw new Error(`the machine tip is not known${note}`)
             if (index === undefined)
                 return hideSecrets(
                     `gateway: this gateway is not in the roster (key hash ${member.keyHashHex}); ask the sponsor to admit it`,
@@ -603,6 +617,16 @@ export class Gateway {
             }
             const { mirror, machine, note: syncNote } = fresh
             const index = mirror.indexOf(member.keyHashHex)
+            if (index === undefined && syncNote) {
+                // The roster is from the last known tip, which may be older
+                // than this gateway's admission: only a successful sync can
+                // conclude that the key is not a member.
+                this.unsigned = reading
+                return this.status(
+                    round,
+                    `reading ${reading} kept (signs it on the next tick); error: could not check the roster${syncNote}`
+                )
+            }
             if (index === undefined)
                 return this.status(
                     round,
@@ -612,6 +636,16 @@ export class Gateway {
             const proof = mirror.proofFor(index)
             const leaf = decodeLeafPre(proof.leafPre)
             this.leafPayout = leaf.payoutHex
+            if (round < 1)
+                return this.status(
+                    round,
+                    `reading ${reading} refused: no round is open yet${syncNote}`
+                )
+            if (round > member.rounds)
+                return this.status(
+                    round,
+                    `reading ${reading} refused: the machine has ended${syncNote}`
+                )
             if (BigInt(round) <= leaf.lastRound) {
                 const why = `waiting for next round (paid in round ${leaf.lastRound})${syncNote}`
                 if (this.once)
@@ -637,7 +671,7 @@ export class Gateway {
             if (result.halted) this.halted = true
             if (result.txid) {
                 this.latest = this.keeper.outpoint ?? `${result.txid}:0`
-                this.deliveredRounds.add(signed.round)
+                this.treeDelivered = true
                 let saved = ''
                 if (this.configPath && result.outpoint)
                     try {

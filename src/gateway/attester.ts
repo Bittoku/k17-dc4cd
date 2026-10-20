@@ -310,6 +310,11 @@ export class MemberAttester {
         return this.attester.pub
     }
 
+    /** Number of rounds of the machine (`[consortium] rounds`). */
+    get rounds(): number {
+        return this.settings.rounds
+    }
+
     /**
      * The round the program computes at a lock time.
      * Input: the nLockTime of the cycle (unix seconds). Output: `roundAt` of

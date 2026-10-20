@@ -17,16 +17,40 @@
  *   range_min..range_max`, unless `[gateway] sign_anyway` is true. A value
  *   that is not a 32-bit cell is always refused.
  *
+ * `MemberAttester` is the tree-mode attester. It has no slot: it finds the
+ * leaf of its own key hash in the roster mirror, and signs under
+ * `readingTag(roundAt(opts, lockTime))` of the tree program, with
+ * `signMemberReading`. It refuses what the chain would reject:
+ * `no round is open` (before `start`), `round closed` (at or after the end),
+ * and `reading out of range` (as above).
+ *
  * The primes never leave this module: no error text and no property holds
  * them.
  */
 
 import { RabinPubKey } from 'scrypt-ts-lib'
 import { bsv } from 'scrypt-ts'
-import { Attester, keyHash, payoutOf, readSlot, signReadingFor } from 'k17-vm'
-import { ConsortiumSettings, GatewayConfig } from '../chain/config'
+import {
+    Attester,
+    keyHash,
+    payoutOf,
+    readSlot,
+    signMemberReading,
+    signReadingFor,
+} from 'k17-vm'
+import {
+    ConsortiumSettings,
+    GatewayConfig,
+    TreeSettings,
+    treeOptionsOf,
+} from '../chain/config'
 import { PendingInput } from '../chain/keeper'
 import { ConsortiumOptions, readingTag } from '../programs/consortium'
+import {
+    TreeConsortiumOptions,
+    readingTag as treeReadingTag,
+    roundAt as treeRoundAt,
+} from '../programs/treeConsortium'
 
 /** Largest cell value. */
 const CELL_MAX = 0xffffffff
@@ -238,6 +262,109 @@ export class GatewayAttester {
             witness: [BigInt(this.slot), value],
             sig: signReadingFor(this.attester, this.instanceId, tag, value),
             attestKey: this.attester.pub,
+        }
+    }
+}
+
+/** What `MemberAttester.sign` gives: the input to relay and the round it was signed for. */
+export interface MemberSigned {
+    /** Witness `[0, reading]`, the signature and the member's key (no proof yet). */
+    input: PendingInput
+    /** The round of the lock time, the one the signature is bound to. */
+    round: number
+}
+
+/** Signs readings for one leaf of a tree-mode consortium machine. */
+export class MemberAttester {
+    /** sha256 of the public key bytes, as a roster leaf stores it (64 hex). */
+    readonly keyHashHex: string
+    /** 20-byte payout hash of this gateway (`payoutAddressOf`), 40 hex. */
+    readonly payoutHex: string
+    /** The Rabin key; private. */
+    private readonly attester: Attester
+    private readonly settings: TreeSettings
+    private readonly options: TreeConsortiumOptions
+    private readonly signAnyway: boolean
+
+    /**
+     * Make the attester from a configuration.
+     * Input: the configuration; it needs `[attester] rabin_p` and `rabin_q`
+     * and, in tree mode, `[consortium]` start, period and rounds.
+     * Throws a plain message (no secret) when one is missing or wrong.
+     */
+    constructor(cfg: GatewayConfig) {
+        this.attester = rabinKeyOf(cfg)
+        this.keyHashHex = keyHash(this.attester.pub)
+        if (!cfg.tree)
+            throw new Error('config: the [consortium] table is required')
+        this.settings = cfg.tree
+        this.options = treeOptionsOf(cfg.tree)
+        this.payoutHex = payoutOf(payoutAddressOf(cfg)).toLowerCase()
+        this.signAnyway = cfg.signAnyway
+        // Fails early, with the reason, on settings that make no round.
+        treeRoundAt(this.options, cfg.tree.start)
+    }
+
+    /** The public key that verifies this attester's signatures. */
+    get publicKey(): RabinPubKey {
+        return this.attester.pub
+    }
+
+    /**
+     * The round the program computes at a lock time.
+     * Input: the nLockTime of the cycle (unix seconds). Output: `roundAt` of
+     * the tree program: 0 before `start`, r for r in 1..rounds, above
+     * `rounds` once the machine has ended.
+     */
+    roundAt(lockTime: number): number {
+        return treeRoundAt(this.options, lockTime)
+    }
+
+    /**
+     * Sign a reading for the round of a lock time.
+     * Input: the reading (a whole number), the exact nLockTime the cycle
+     * will carry, and the instance id of the machine (64 hex). The round is
+     * `roundAt(lockTime)`, so the signature and the program use the same
+     * round.
+     * Output: the pending input (witness `[0, reading]`, signature, own key
+     * as `attestKey`) and the round. Add the roster proof as `tree`.
+     * Throws Error('no round is open') before `start`, Error('round closed')
+     * at or after the end, and Error('reading out of range') when the
+     * reading is not a cell or is outside the range with `sign_anyway` off.
+     */
+    sign(
+        reading: number | bigint,
+        lockTime: number,
+        instanceIdHex: string
+    ): MemberSigned {
+        const round = this.roundAt(lockTime)
+        if (round < 1) throw new Error('no round is open')
+        if (round > this.settings.rounds) throw new Error('round closed')
+        if (typeof reading === 'number' && !Number.isInteger(reading))
+            throw new Error('reading out of range')
+        const value = BigInt(reading)
+        if (value < 0n || value > BigInt(CELL_MAX))
+            throw new Error('reading out of range')
+        const { rangeMin, rangeMax } = this.settings
+        if (
+            !this.signAnyway &&
+            rangeMin !== undefined &&
+            rangeMax !== undefined &&
+            (value < BigInt(rangeMin) || value > BigInt(rangeMax))
+        )
+            throw new Error('reading out of range')
+        return {
+            round,
+            input: {
+                witness: [0n, value],
+                sig: signMemberReading(
+                    this.attester,
+                    instanceIdHex.toLowerCase(),
+                    treeReadingTag(round),
+                    value
+                ),
+                attestKey: this.attester.pub,
+            },
         }
     }
 }

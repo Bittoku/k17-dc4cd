@@ -37,6 +37,8 @@ slot = 1
 
 Add `[bridge] serial = "/dev/ttyUSB0"` to read a serial device. Without it, the gateway reads standard input. Add `[attester] payout_address` to get the payments at an address that is not the wallet address.
 
+Tree mode: a machine that the sponsor deployed with a roster tree needs no slot. Set `[gateway] mode = "tree"` and give `[consortium]` the `start`, `period` and `rounds` of the machine (and `range_min` and `range_max` when the program checks a range); `slots` and `epoch` are not used. The sponsor admits the gateway key with `k17forth admit`, and the gateway finds its own leaf by key hash. It refuses to start when its key is not in the roster. Each reading is signed for the round of the lock time of the cycle that carries it, so a reading that waits for the next round or for the chain clock is signed again. The full tree tutorial is a separate document.
+
 ## The two mote words
 
 The file `docs/bridge-mote.fs` holds two DC4CD words for the bridge mote:

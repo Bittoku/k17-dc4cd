@@ -11,6 +11,9 @@
  * atomically, and keeps the file mode; `saveGenesisInscription` adds the
  * genesis roster inscription outpoint to `[machine]`; `saveAttesterKey` writes a new
  * `[attester]` key the same way with mode 600. Both use `writeTableEntries`.
+ * `[gateway] mode` is "slots" (default; `[consortium]` needs start, period,
+ * epoch, slots, rounds) or "tree" (`[consortium]` needs start, period, rounds
+ * and may have range_min/range_max; `treeOptionsOf` turns it into program options).
  */
 
 import {
@@ -23,6 +26,7 @@ import {
 } from 'fs'
 import { randomBytes } from 'crypto'
 import * as TOML from '@iarna/toml'
+import { TreeConsortiumOptions, roundAt } from '../programs/treeConsortium'
 
 /** Networks the tools can talk to. */
 export type NetworkName = 'testnet' | 'mainnet'
@@ -49,6 +53,28 @@ export interface ConsortiumSettings {
     /** Highest accepted reading (`range_max`), when the program checks a range. */
     rangeMax?: number
 }
+
+/**
+ * Public settings of a tree-mode machine (`[consortium]` in tree mode):
+ * the fields of the program's `TreeConsortiumOptions` that a gateway needs
+ * to compute the round of a lock time. Round r (1..rounds) runs from
+ * start + (r - 1) * period up to (not including) start + r * period.
+ */
+export interface TreeSettings {
+    /** Unix time (s) at which round 1 opens. */
+    start: number
+    /** Length of a round in seconds, at least 60. */
+    period: number
+    /** Number of rounds, at least 1. */
+    rounds: number
+    /** Lowest accepted reading (`range_min`), when the program checks a range. */
+    rangeMin?: number
+    /** Highest accepted reading (`range_max`), when the program checks a range. */
+    rangeMax?: number
+}
+
+/** How a gateway relays: for a roster slot, or as a member of a roster tree. */
+export type GatewayMode = 'slots' | 'tree'
 
 /** The validated configuration. Optional parts are undefined when not set. */
 export interface GatewayConfig {
@@ -81,8 +107,12 @@ export interface GatewayConfig {
     slot?: number
     /** Sign a reading even when the gateway thinks it is out of range. */
     signAnyway: boolean
-    /** Settings of the consortium machine (`[consortium]`). */
+    /** Settings of the consortium machine (`[consortium]`), slot mode. */
     consortium?: ConsortiumSettings
+    /** `[gateway] mode`: undefined means "slots". */
+    mode?: GatewayMode
+    /** Settings of the tree-mode machine (`[consortium]`); tree mode only. */
+    tree?: TreeSettings
 }
 
 /**
@@ -176,6 +206,68 @@ function consortiumSettings(doc: TOML.JsonMap): ConsortiumSettings | undefined {
 }
 
 /**
+ * Read the `[consortium]` table of a tree-mode gateway.
+ * Input: the parsed document. Output: the settings. Throws when the table,
+ * `start`, `period` or `rounds` is missing or not a whole number, when the
+ * values are not a valid tree machine (period below 60 s, end past the
+ * cell range), or when only one of `range_min` and `range_max` is set.
+ * `slots` and `epoch` are ignored in tree mode.
+ */
+function treeSettings(doc: TOML.JsonMap): TreeSettings {
+    if (doc.consortium === undefined)
+        throw new Error('config: the [consortium] table is required')
+    const t = table(doc, 'consortium')
+    const required = (key: string, min: number): number => {
+        const value = optionalInteger('consortium', t, key, min)
+        if (value === undefined)
+            throw new Error(`config: [consortium] ${key} is required`)
+        return value
+    }
+    const settings: TreeSettings = {
+        start: required('start', 1),
+        period: required('period', 60),
+        rounds: required('rounds', 1),
+    }
+    const rangeMin = optionalInteger('consortium', t, 'range_min', 0)
+    const rangeMax = optionalInteger('consortium', t, 'range_max', 0)
+    if ((rangeMin === undefined) !== (rangeMax === undefined))
+        throw new Error(
+            'config: [consortium] range_min and range_max go together'
+        )
+    if (rangeMin !== undefined && rangeMax !== undefined) {
+        if (rangeMax < rangeMin)
+            throw new Error(
+                'config: [consortium] range_max must not be below range_min'
+            )
+        settings.rangeMin = rangeMin
+        settings.rangeMax = rangeMax
+    }
+    try {
+        roundAt(treeOptionsOf(settings), settings.start)
+    } catch (e) {
+        throw new Error(`config: [consortium] ${(e as Error).message}`)
+    }
+    return settings
+}
+
+/**
+ * The program options that `roundAt` and `readingTag` need.
+ * Input: the tree settings. Output: `TreeConsortiumOptions` (the bounty is a
+ * placeholder of 1; a gateway never uses it).
+ */
+export function treeOptionsOf(settings: TreeSettings): TreeConsortiumOptions {
+    return {
+        start: settings.start,
+        period: settings.period,
+        rounds: settings.rounds,
+        bountyPerReading: 1,
+        ...(settings.rangeMin !== undefined && settings.rangeMax !== undefined
+            ? { range: { min: settings.rangeMin, max: settings.rangeMax } }
+            : {}),
+    }
+}
+
+/**
  * Load and check a configuration file.
  * Input: path to the TOML file.
  * Output: the configuration. Throws an Error with a plain message when the
@@ -218,6 +310,9 @@ export function loadConfig(path: string): GatewayConfig {
         throw new Error(
             'config: [gateway] slot must be a whole number, 0 or more'
         )
+    const gatewayMode = gateway.mode ?? 'slots'
+    if (gatewayMode !== 'slots' && gatewayMode !== 'tree')
+        throw new Error('config: [gateway] mode must be "slots" or "tree"')
     const signAnyway = gateway.sign_anyway
     if (signAnyway !== undefined && typeof signAnyway !== 'boolean')
         throw new Error('config: [gateway] sign_anyway must be true or false')
@@ -239,7 +334,10 @@ export function loadConfig(path: string): GatewayConfig {
         ),
         slot: slot as number | undefined,
         signAnyway: signAnyway === true,
-        consortium: consortiumSettings(doc),
+        mode: gatewayMode,
+        consortium:
+            gatewayMode === 'slots' ? consortiumSettings(doc) : undefined,
+        tree: gatewayMode === 'tree' ? treeSettings(doc) : undefined,
     }
 }
 
@@ -260,9 +358,12 @@ export function describeConfig(cfg: GatewayConfig): string {
         `machine=${cfg.machineOutpoint ?? 'not set'}`,
         `slot=${cfg.slot ?? 'not set'}`,
         `sign_anyway=${cfg.signAnyway}`,
+        `mode=${cfg.mode ?? 'slots'}`,
         `consortium=${
-            cfg.consortium
-                ? `start:${cfg.consortium.start},period:${cfg.consortium.period},rounds:${cfg.consortium.rounds}`
+            cfg.tree ?? cfg.consortium
+                ? `start:${(cfg.tree ?? cfg.consortium)!.start},period:${
+                      (cfg.tree ?? cfg.consortium)!.period
+                  },rounds:${(cfg.tree ?? cfg.consortium)!.rounds}`
                 : 'not set'
         }`,
     ].join(' ')

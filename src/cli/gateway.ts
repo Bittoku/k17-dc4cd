@@ -14,7 +14,10 @@
  * bridge ends or the machine halts; with `--once` it stops after the first
  * reading is delivered, dropped or refused, with exit code 0 only when the
  * machine accepted the reading (else 3). A bridge error ends it with
- * exit code 1. A mainnet config needs
+ * exit code 1. With `[gateway] mode = "tree"` the gateway is a roster
+ * member (see `src/gateway/gateway.ts`): `run` refuses to start, exit code 1,
+ * when its key is not in the roster, and it saves `[machine] tip_outpoint`
+ * after each relay. A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
 
@@ -35,7 +38,8 @@ import type { CliIo } from './k17forth'
 
 /** Help text of the gateway sub-commands. */
 export const GATEWAY_USAGE = `usage: k17forth gateway init --config <gw.toml>
-       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--i-know-this-spends-real-money]`
+       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--i-know-this-spends-real-money]
+       ([gateway] mode = "tree" in the config makes the gateway a roster member; the default is "slots")`
 
 /** Switch that allows a gateway on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -127,7 +131,11 @@ async function initCommand(
             }`
         )
         io.out(`  payout hash: ${payoutOf(payout)}`)
-        if (cfg.slot !== undefined) io.out(`  slot: ${cfg.slot}`)
+        if (cfg.mode === 'tree')
+            io.out(
+                '  (tree mode: the sponsor admits this key with `k17forth admit`; no slot is needed)'
+            )
+        else if (cfg.slot !== undefined) io.out(`  slot: ${cfg.slot}`)
         return 0
     } catch (e) {
         io.err(hide((e as Error).message))
@@ -190,6 +198,7 @@ async function runGateway(
             intervalMs: interval * 1000,
             out: (line) => io.out(hide(line)),
             once: parsed.switches.has('once'),
+            configPath: config,
         })
         io.out(
             `gateway: ${describeConfig(cfg)} bridge=${

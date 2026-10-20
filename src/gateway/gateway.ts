@@ -22,6 +22,29 @@
  * delivery the gateway signs no other reading for that round, because the
  * program accepts one reading per slot per round.
  *
+ * Tree mode (`[gateway] mode = "tree"`): the gateway is a member of a roster
+ * tree, not the owner of a slot. For each reading it follows the machine to
+ * its tip, rebuilds the roster (`loadRoster`, from `tip_outpoint`/`outpoint`),
+ * finds its own leaf by key hash, and skips with "waiting for next round"
+ * when the leaf's `lastRound` is not below the round of the lock time. The
+ * lock time is fixed first: one wall-clock value `now` goes to both
+ * `Keeper.chainTime` and `Keeper.tick`, so the lock time is exactly
+ * `chain.time` = min(now, MTP - 1), and the reading is signed under
+ * `readingTag(roundAt(lockTime))`, the round the program computes from the
+ * same TIME. The cycle carries witness `[0, reading]`, the signature, the
+ * gateway's key and the leaf's Merkle proof; one cycle verifies and pays.
+ * A tree gateway keeps only the raw reading, never a signature: a kept
+ * reading (tip outage, MIN_STEP wait, round already paid) is signed again
+ * for the round of the cycle that finally carries it, because the tag
+ * depends on the round. Before every attempt the roster is reloaded; when
+ * another member's payment lands between the load and the broadcast, the
+ * proof is stale, and the gateway reloads once and plans again (a second
+ * failure reports the reason). A gateway whose key is not in the roster
+ * refuses to start (`run` returns NOT_IN_ROSTER); one that is removed later
+ * refuses each reading and relays nothing, as a slot gateway does when its
+ * slot is emptied. After a relay it writes `[machine] tip_outpoint` (needs
+ * `GatewayOptions.configPath`).
+ *
  * Each tick and each reading gives one status line: the round, the slot,
  * the readings delivered and satoshis earned by this slot so far (from
  * `walkHistory`), and what the tick did. No status line holds a secret.
@@ -29,12 +52,14 @@
 
 import type { Provider, Signer } from 'scrypt-ts'
 import { bsv } from 'scrypt-ts'
-import { GatewayConfig, hideSecrets } from '../chain/config'
+import { decodeLeafPre } from 'k17-vm'
+import { GatewayConfig, hideSecrets, saveTipOutpoint } from '../chain/config'
 import { Keeper, KeeperOptions, PendingInput } from '../chain/keeper'
 import { TxSource, parseOutpoint, walkHistory } from '../chain/history'
 import { DecodedMachine, decodeMachine } from '../chain/decode'
+import { loadRoster } from '../chain/loadRoster'
 import { tickLine } from '../cli/keeper'
-import { GatewayAttester, checkInstance } from './attester'
+import { GatewayAttester, MemberAttester, checkInstance } from './attester'
 import { Bridge, openBridge } from './bridge'
 
 /** Default time between ticks with no reading, in milliseconds. */
@@ -59,6 +84,11 @@ export interface GatewayOptions {
      * `run`. Default: false (run until the bridge ends).
      */
     once?: boolean
+    /**
+     * Path of the config file. Tree mode writes `[machine] tip_outpoint`
+     * there after each relay. Default: none (nothing is written).
+     */
+    configPath?: string
 }
 
 /** A signed reading that waits for an attest cycle. */
@@ -100,6 +130,14 @@ class CachedSource implements TxSource {
         }
         return tx
     }
+
+    /**
+     * Keep a transaction that the caller already holds (the keeper's latest
+     * cycle), so that no fetch is needed for it. Input: the transaction.
+     */
+    remember(tx: bsv.Transaction): void {
+        this.cache.set(tx.id, tx)
+    }
 }
 
 /** Chain time of one operation: the lock time and the MTP it came from. */
@@ -116,13 +154,27 @@ const UNKNOWN = '?'
 /** Exit code of `run` when the bridge failed. */
 export const BRIDGE_FAILED = 1
 
+/** Exit code of `run` in tree mode when the gateway's key is not in the roster. */
+export const NOT_IN_ROSTER = 1
+
+/** Most attempts of one tree-mode reading: the first, and one after a reload. */
+const TREE_ATTEMPTS = 2
+
 /** Exit code of `run` with `once` when no reading was delivered. */
 export const NOT_DELIVERED = 3
 
 /** Relays the readings of one slot into one consortium machine. */
 export class Gateway {
     private readonly keeper: Keeper
-    private readonly attester: GatewayAttester
+    /** The slot attester (slot mode); undefined in tree mode. */
+    private readonly slotSigner?: GatewayAttester
+    /** The member attester (tree mode); undefined in slot mode. */
+    private readonly member?: MemberAttester
+    private readonly configPath?: string
+    /** Payout hash of this member's leaf, once known (tree mode). */
+    private leafPayout?: string
+    /** Leaf index of this member, once known (tree mode). */
+    private leafIndex?: number
     private readonly source: CachedSource
     private readonly bridge: AsyncIterable<number>
     private readonly now: () => number
@@ -160,7 +212,9 @@ export class Gateway {
         options: GatewayOptions = {}
     ) {
         this.cfg = cfg
-        this.attester = new GatewayAttester(cfg)
+        if (cfg.mode === 'tree') this.member = new MemberAttester(cfg)
+        else this.slotSigner = new GatewayAttester(cfg)
+        this.configPath = options.configPath
         this.keeper = new Keeper(cfg, provider, signer, options.keeper)
         this.latest = this.keeper.outpoint as string
         this.source = new CachedSource(provider)
@@ -176,6 +230,15 @@ export class Gateway {
                         `bridge: discarded a line of ${chars} characters (longer than the limit)`
                     ),
             })
+    }
+
+    /**
+     * The slot attester. Output: the attester; only called in slot mode.
+     * Throws when the gateway is in tree mode.
+     */
+    private attester(): GatewayAttester {
+        if (!this.slotSigner) throw new Error('not a slot gateway')
+        return this.slotSigner
     }
 
     /** The machine outpoint the next tick spends; undefined once halted. */
@@ -201,6 +264,7 @@ export class Gateway {
      */
     async handleReading(reading: number): Promise<string> {
         if (this.halted) return this.status(null, 'machine halted')
+        if (this.member) return this.handleTreeReading(reading)
         this.unsigned = undefined
         let chain: ChainNow
         try {
@@ -216,7 +280,7 @@ export class Gateway {
                 )}`
             )
         }
-        let round: number | null = this.attester.roundAt(chain.time)
+        let round: number | null = this.attester().roundAt(chain.time)
         // Other processes move the machine on (the sponsor's endorsements,
         // other gateways): check the enrolment on the newest machine.
         let syncNote = ''
@@ -243,13 +307,13 @@ export class Gateway {
         if (machine) {
             try {
                 checkInstance(this.cfg.instanceId as string, machine.instanceId)
-                round = this.attester.currentRound(chain.time, machine)
+                round = this.attester().currentRound(chain.time, machine)
                 if (round !== null && this.deliveredRounds.has(round))
                     return this.status(
                         round,
                         `reading ${reading} refused: slot already delivered in round ${round}${syncNote}`
                     )
-                const input = this.attester.sign(reading, round)
+                const input = this.attester().sign(reading, round)
                 this.pending = { input, round: round as number, reading }
             } catch (e) {
                 return this.status(
@@ -270,6 +334,9 @@ export class Gateway {
         if (this.halted) return this.status(null, 'machine halted')
         if (this.unsigned !== undefined)
             return this.handleReading(this.unsigned)
+        // A tree member has no cycle to run without a reading: the reading
+        // cycle itself pays.
+        if (this.member) return this.status(UNKNOWN, 'idle: no reading waits')
         let chain: ChainNow
         try {
             chain = await this.keeper.chainTime(this.now())
@@ -283,6 +350,8 @@ export class Gateway {
      * Run until the bridge ends or the machine halts: one tick per reading
      * and one tick per interval. With `once`, stop after the first reading
      * is delivered and paid, dropped or refused. Each status line goes to `out`.
+     * In tree mode it first checks the roster (`preflight`) and returns
+     * NOT_IN_ROSTER when this gateway's key is not a member.
      * Output: 0 when the bridge ended or the machine halted; with `once`,
      * NOT_DELIVERED when the reading was refused or dropped, or the bridge
      * ended before a reading, or the machine halted first; BRIDGE_FAILED
@@ -290,6 +359,13 @@ export class Gateway {
      * hidden). Never throws for chain errors (they are status lines).
      */
     async run(): Promise<number> {
+        if (this.member) {
+            const refusal = await this.preflight()
+            if (refusal) {
+                this.out(refusal)
+                return NOT_IN_ROSTER
+            }
+        }
         let stop: () => void = () => undefined
         const stopped = new Promise<'stop'>((resolve) => {
             stop = () => resolve('stop')
@@ -376,7 +452,7 @@ export class Gateway {
      * Input: the chain time of this operation. Output: the status line.
      */
     private async tick(chain: ChainNow): Promise<string> {
-        const round = this.attester.roundAt(chain.time)
+        const round = this.attester().roundAt(chain.time)
         let note = ''
         if (this.pending && this.pending.round !== round) {
             note = ` (dropped reading ${this.pending.reading}: round ${this.pending.round} closed)`
@@ -402,6 +478,204 @@ export class Gateway {
             this.pending = undefined
         }
         return this.status(round, tickLine(result) + note)
+    }
+
+    /**
+     * Follow the machine to its tip and rebuild the roster from the chain.
+     * Output: the mirror and the machine at the tip, and a note when the
+     * sync failed (the last known tip was used). Throws when the machine is
+     * halted or the roster cannot be loaded; the message has no secret.
+     */
+    private async freshRoster(): Promise<{
+        mirror: Awaited<ReturnType<typeof loadRoster>>['mirror']
+        machine: Awaited<ReturnType<typeof loadRoster>>['machine']
+        note: string
+    }> {
+        let note = ''
+        try {
+            await this.keeper.sync()
+        } catch (e) {
+            note = ` (sync failed, used the last known machine: ${messageOf(
+                e
+            )})`
+        }
+        const tip = this.keeper.outpoint
+        if (!tip) throw new Error('machine halted')
+        this.rememberTip()
+        const loaded = await loadRoster(this.cfg, {
+            provider: this.source,
+            outpoint: tip,
+        })
+        if (this.cfg.instanceId)
+            checkInstance(this.cfg.instanceId, loaded.machine.instanceId)
+        return { ...loaded, note }
+    }
+
+    /** Give the keeper's newest cycle transaction to the cache (no fetch needed for it). */
+    private rememberTip(): void {
+        const tx = this.keeper.machineTx
+        if (tx) this.source.remember(tx)
+    }
+
+    /**
+     * Tree mode, before the loop: check that the key is in the roster.
+     * Output: a refusal line when the key hash is not a leaf of the roster
+     * ("this gateway is not in the roster"), else undefined. A failure to
+     * read the chain is only noted on `out`: membership is checked again
+     * before each relay.
+     */
+    private async preflight(): Promise<string | undefined> {
+        const member = this.member as MemberAttester
+        try {
+            const { mirror } = await this.freshRoster()
+            const index = mirror.indexOf(member.keyHashHex)
+            if (index === undefined)
+                return hideSecrets(
+                    `gateway: this gateway is not in the roster (key hash ${member.keyHashHex}); ask the sponsor to admit it`,
+                    this.cfg
+                )
+            this.leafIndex = index
+            this.leafPayout = decodeLeafPre(
+                mirror.proofFor(index).leafPre
+            ).payoutHex
+        } catch (e) {
+            this.out(
+                hideSecrets(
+                    `gateway: could not check the roster yet: ${messageOf(e)}`,
+                    this.cfg
+                )
+            )
+        }
+        return undefined
+    }
+
+    /**
+     * Tree mode: relay one reading as a roster member.
+     * Each attempt reads the chain time once, follows the machine, reloads
+     * the roster, finds the leaf, checks `lastRound`, signs under the round
+     * of the lock time and ticks. At most TREE_ATTEMPTS attempts: a stale
+     * proof (another member was paid in between, so the broadcast failed
+     * and the keeper resynced, or the plan says "witness rejected") makes a
+     * second attempt with a fresh roster.
+     * A reading that could not be tried now (tip unreadable, roster
+     * unreadable, waiting for MTP or the next round, a failed broadcast) is
+     * kept raw in `unsigned`; it is signed again on the attempt that
+     * carries it. A reading the machine refuses, or one that is out of
+     * range, is dropped.
+     * Input: the reading. Output: the status line.
+     */
+    private async handleTreeReading(reading: number): Promise<string> {
+        const member = this.member as MemberAttester
+        this.unsigned = undefined
+        let stale = ''
+        for (let attempt = 0; attempt < TREE_ATTEMPTS; attempt++) {
+            // One wall-clock value for the chain time and the tick, so the
+            // lock time of the cycle is exactly chain.time.
+            const now = this.now()
+            let chain: ChainNow
+            try {
+                chain = await this.keeper.chainTime(now)
+            } catch (e) {
+                this.unsigned = reading
+                return this.status(
+                    UNKNOWN,
+                    `reading ${reading} kept, not signed yet (signs it on the next tick): ${messageOf(
+                        e
+                    )}`
+                )
+            }
+            const round = member.roundAt(chain.time)
+            let fresh
+            try {
+                fresh = await this.freshRoster()
+            } catch (e) {
+                if (/machine halted/.test(messageOf(e))) {
+                    this.halted = true
+                    return this.status(null, 'machine halted')
+                }
+                this.unsigned = reading
+                return this.status(
+                    round,
+                    `reading ${reading} kept (signs it on the next tick); error: load roster: ${messageOf(
+                        e
+                    )}`
+                )
+            }
+            const { mirror, machine, note: syncNote } = fresh
+            const index = mirror.indexOf(member.keyHashHex)
+            if (index === undefined)
+                return this.status(
+                    round,
+                    `reading ${reading} refused: this gateway is not in the roster any more (removed?); relaying nothing${syncNote}`
+                )
+            this.leafIndex = index
+            const proof = mirror.proofFor(index)
+            const leaf = decodeLeafPre(proof.leafPre)
+            this.leafPayout = leaf.payoutHex
+            if (BigInt(round) <= leaf.lastRound) {
+                const why = `waiting for next round (paid in round ${leaf.lastRound})${syncNote}`
+                if (this.once)
+                    return this.status(
+                        round,
+                        `reading ${reading} dropped: ${why}`
+                    )
+                this.unsigned = reading
+                return this.status(round, `reading ${reading} kept: ${why}`)
+            }
+            let signed
+            try {
+                signed = member.sign(reading, chain.time, machine.instanceId)
+            } catch (e) {
+                return this.status(
+                    round,
+                    `reading ${reading} refused: ${messageOf(e)}${syncNote}`
+                )
+            }
+            const input: PendingInput = { ...signed.input, tree: proof }
+            const result = await this.keeper.tick(now, input, chain.mtp)
+            this.rememberTip()
+            if (result.halted) this.halted = true
+            if (result.txid) {
+                this.latest = this.keeper.outpoint ?? `${result.txid}:0`
+                this.deliveredRounds.add(signed.round)
+                let saved = ''
+                if (this.configPath && result.outpoint)
+                    try {
+                        saveTipOutpoint(this.configPath, result.outpoint)
+                    } catch (e) {
+                        saved = ` (could not save tip_outpoint: ${messageOf(
+                            e
+                        )})`
+                    }
+                return this.status(
+                    signed.round,
+                    tickLine(result) + stale + syncNote + saved
+                )
+            }
+            const rejected = /witness rejected/.test(result.error ?? '')
+            const isStale = rejected || (result.resynced && !!result.error)
+            if (isStale && attempt + 1 < TREE_ATTEMPTS) {
+                stale =
+                    ' (the roster changed while the cycle went out; loaded it again)'
+                continue
+            }
+            if (rejected) {
+                // No retry can change the machine's answer.
+                return this.status(
+                    signed.round,
+                    `reading ${reading} dropped: the machine rejects it (${result.error})${stale}${syncNote}`
+                )
+            }
+            // MIN_STEP wait, an early tip, or a failed broadcast: keep the
+            // raw reading; the next attempt signs it again for its own round.
+            this.unsigned = reading
+            return this.status(
+                signed.round,
+                tickLine(result) + ' (reading kept)' + stale + syncNote
+            )
+        }
+        // Not reached: the last attempt always returns.
+        return this.status(UNKNOWN, 'error: no attempt ran')
     }
 
     /**
@@ -431,9 +705,11 @@ export class Gateway {
     ): Promise<string> {
         await this.refreshTally()
         return hideSecrets(
-            `round ${round ?? 'closed'} slot ${this.attester.slot} ${
-                this.tally
-            }: ${detail}`,
+            `round ${round ?? 'closed'} ${
+                this.member
+                    ? `member ${this.leafIndex ?? '?'}`
+                    : `slot ${this.attester().slot}`
+            } ${this.tally}: ${detail}`,
             this.cfg
         )
     }
@@ -446,11 +722,13 @@ export class Gateway {
     private async refreshTally(): Promise<void> {
         try {
             const cycles = await walkHistory(this.source, this.latest)
-            const paid = cycles.filter(
-                (c) =>
-                    c.payout?.slot === this.attester.slot &&
-                    c.payout.addressHex.toLowerCase() ===
-                        this.attester.payoutHex
+            const paid = cycles.filter((c) =>
+                this.member
+                    ? c.payout?.addressHex.toLowerCase() ===
+                      (this.leafPayout ?? this.member.payoutHex)
+                    : c.payout?.slot === this.attester().slot &&
+                      c.payout.addressHex.toLowerCase() ===
+                          this.attester().payoutHex
             )
             const earned = paid.reduce((sum, c) => sum + c.payout!.satoshis, 0)
             this.tally = `delivered ${paid.length} earned ${earned} sats`

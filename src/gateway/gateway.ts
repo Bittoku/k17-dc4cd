@@ -42,7 +42,9 @@
  * failure reports the reason). A gateway whose key is not in the roster
  * refuses to start (`run` returns NOT_IN_ROSTER); one that is removed later
  * refuses each reading and relays nothing, as a slot gateway does when its
- * slot is emptied. The start check is fail-open: when the chain cannot be
+ * slot is emptied. With `once`, a reading that cannot go out now (waiting
+ * for MTP, a failed broadcast) is dropped and `run` returns NOT_DELIVERED:
+ * run the command again after the next block. The start check is fail-open: when the chain cannot be
  * read (or the sync of the tip fails) `run` only warns and goes on, and
  * membership is checked again before every relay; only a roster loaded after
  * a successful sync may conclude "not in the roster" (after a failed sync the
@@ -702,6 +704,17 @@ export class Gateway {
             }
             // MIN_STEP wait, an early tip, or a failed broadcast: keep the
             // raw reading; the next attempt signs it again for its own round.
+            // With `once` there is no later tick to wait for: drop the reading
+            // (exit NOT_DELIVERED); the operator runs the command again
+            // after the next block.
+            if (this.once)
+                return this.status(
+                    signed.round,
+                    tickLine(result) +
+                        ' (reading dropped: run again after the next block)' +
+                        stale +
+                        syncNote
+                )
             this.unsigned = reading
             return this.status(
                 signed.round,

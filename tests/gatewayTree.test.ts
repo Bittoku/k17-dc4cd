@@ -28,7 +28,7 @@ import { admitCommand, removeCommand } from '../src/cli/admit'
 import { deployCommand } from '../src/cli/deploy'
 import { gatewayCommand } from '../src/cli/gateway'
 import { MemberAttester } from '../src/gateway/attester'
-import { Gateway, NOT_IN_ROSTER } from '../src/gateway/gateway'
+import { Gateway, NOT_DELIVERED, NOT_IN_ROSTER } from '../src/gateway/gateway'
 import {
     readingTag,
     roundAt,
@@ -103,6 +103,11 @@ class HookChain extends MemoryChain {
 /** A bridge that ends at once; the tests call `handleReading` themselves. */
 async function* emptyBridge(): AsyncGenerator<number> {
     // no readings
+}
+
+/** A bridge with one reading. */
+async function* oneReading(reading: number): AsyncGenerator<number> {
+    yield reading
 }
 
 describe('gateway: tree mode', function () {
@@ -201,7 +206,8 @@ describe('gateway: tree mode', function () {
     function gatewayOf(
         chain: MemoryChain,
         path: string,
-        tip?: ChainTip
+        tip?: ChainTip,
+        once?: { reading: number }
     ): { gateway: Gateway; lines: string[] } {
         const lines: string[] = []
         const gateway = new Gateway(
@@ -209,10 +215,11 @@ describe('gateway: tree mode', function () {
             chain,
             new TestWallet(WALLET_KEY, chain),
             {
-                bridge: emptyBridge(),
+                bridge: once ? oneReading(once.reading) : emptyBridge(),
                 keeper: keeperOptions(chain, tip),
                 now: clockOf(chain),
                 intervalMs: 20,
+                once: once !== undefined,
                 out: (line) => lines.push(line),
                 configPath: path,
             }
@@ -554,6 +561,62 @@ describe('gateway: tree mode', function () {
         expect(await gateway.tickIdle()).to.contain('delivered 1')
         expect(gateway.pendingReading).to.equal(undefined)
         expect(chain.verifyMachineSpends()).to.be.at.least(2)
+    })
+
+    it('run --once: a relayed and paid reading exits 0', async () => {
+        const { chain, config } = await deployTree()
+        const { gateway, lines } = gatewayOf(
+            chain,
+            memberConfig(config, alice),
+            undefined,
+            { reading: 5000 }
+        )
+        expect(await gateway.run()).to.equal(0)
+        expect(lines.join('\n')).to.contain('delivered 1 earned 150 sats')
+        expect(await lastRoundOf(chain, config, ALICE_INDEX)).to.equal(1n)
+        expect(chain.verifyMachineSpends()).to.be.at.least(1)
+    })
+
+    it('run --once: a gateway already paid in this round exits NOT_DELIVERED and drops the reading', async () => {
+        const { chain, config } = await deployTree()
+        const path = memberConfig(config, alice)
+        expect(
+            await gatewayOf(chain, path).gateway.handleReading(5000)
+        ).to.contain('delivered 1')
+        const sent = chain.cycleBroadcasts
+        const { gateway, lines } = gatewayOf(chain, path, undefined, {
+            reading: 5200,
+        })
+        expect(await gateway.run()).to.equal(NOT_DELIVERED)
+        expect(lines.join('\n')).to.contain('waiting for next round')
+        expect(gateway.pendingReading).to.equal(undefined)
+        expect(chain.cycleBroadcasts).to.equal(sent)
+    })
+
+    it('run --once: waiting for MTP exits NOT_DELIVERED with nothing broadcast', async () => {
+        const { chain, config } = await deployTree()
+        // The chain time stays at one value, so a second cycle breaks MIN_STEP.
+        const tip: ChainTip = { mtp: START + 200 }
+        clockBase = START + 300
+        expect(
+            await gatewayOf(
+                chain,
+                memberConfig(config, alice),
+                tip
+            ).gateway.handleReading(5000)
+        ).to.contain('delivered 1')
+        const sent = chain.cycleBroadcasts
+        const { gateway, lines } = gatewayOf(
+            chain,
+            memberConfig(config, bob),
+            tip,
+            { reading: 5100 }
+        )
+        const code = await gateway.run()
+        expect(code, lines.join('\n')).to.equal(NOT_DELIVERED)
+        expect(lines.join('\n')).to.contain('waiting for MTP')
+        expect(gateway.pendingReading).to.equal(undefined)
+        expect(chain.cycleBroadcasts).to.equal(sent)
     })
 
     it('refuses a reading out of range and sends nothing', async () => {

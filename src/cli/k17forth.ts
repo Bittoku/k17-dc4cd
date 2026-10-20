@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Entry point of the k17forth tool: dispatches to the `compile`, `run`,
- * `repl`, `inspect`, `deploy`, `endorse`, `keeper` and `gateway` sub-commands. `main` takes the arguments and an output sink so
+ * `repl`, `inspect`, `deploy`, `inscribe-genesis`, `endorse`, `keeper` and
+ * `gateway` sub-commands. `main` takes the arguments and an output sink so
  * tests can call it without a process.
  */
 
@@ -10,13 +11,21 @@ import { runCommand } from './run'
 import { startRepl } from './repl'
 import { inspectCommand } from './inspect'
 import { deployCommand } from './deploy'
+import { inscribeGenesisCommand } from './inscribeGenesis'
 import { endorseCommand } from './endorse'
 import { keeperCommand } from './keeper'
 import { gatewayCommand } from './gateway'
 import { loadK17Artifact } from '../chain/artifact'
 
 /** Commands that make or read K17 machines: they need the artifact. */
-const CHAIN_COMMANDS = ['inspect', 'deploy', 'endorse', 'keeper', 'gateway']
+const CHAIN_COMMANDS = [
+    'inspect',
+    'deploy',
+    'inscribe-genesis',
+    'endorse',
+    'keeper',
+    'gateway',
+]
 
 /** Where a command writes its text. */
 export interface CliIo {
@@ -44,7 +53,12 @@ commands:
   deploy <file.fs> --config <gw.toml> --deposit <sats> --reward-min <sats>
          --slope <sats/s> --reward-max <sats> [--beneficiary <addr>]
          [--roster <keys>] [--initial-mem <hexfile> | --sponsor <key>]
-                                          deploy a machine, save its outpoint in the config
+         [--dead-man <seconds>] [--tree <members.json>]
+                                          deploy a machine, save its outpoint in the config;
+                                          --tree (needs --sponsor) deploys a tree-mode machine
+                                          and inscribes its genesis roster
+  inscribe-genesis <gw.toml> --tree <members.json>
+                                          inscribe the genesis roster of a deployed tree machine
   endorse --config <sponsor.toml> --member <public key hex> --payout <addr> --slot <n>
                                           sponsor: enrol a landowner's key into a roster slot
   keeper --config <gw.toml> [--interval <seconds>]
@@ -79,6 +93,8 @@ export function main(
             return inspectCommand(rest, io)
         case 'deploy':
             return deployCommand(rest, io)
+        case 'inscribe-genesis':
+            return inscribeGenesisCommand(rest, io)
         case 'endorse':
             return endorseCommand(rest, io)
         case 'keeper':

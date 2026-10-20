@@ -73,11 +73,31 @@ export class RosterMirror {
         if (!/^[0-9a-fA-F]{64}$/.test(g.instanceId)) {
             throw new Error('instanceId must be 64 hex characters')
         }
-        if (!Array.isArray(g.members)) {
+        const mirror = RosterMirror.fromMembers(g.members)
+        if (mirror.tree.root() !== g.rosterRoot.toLowerCase()) {
+            throw new Error(
+                `genesis members give root ${mirror.tree.root()}, not the deployed ${
+                    g.rosterRoot
+                }`
+            )
+        }
+        return mirror
+    }
+
+    /**
+     * Build a mirror from a member list alone, with no root to compare.
+     * A sponsor uses it to find the root that a machine must be deployed
+     * with; `fromGenesis` uses it and then checks the root.
+     * Input: the members, in the form of `GenesisRoster.members`.
+     * Output: the mirror at seq 0. Throws when a member field is malformed
+     * or two members share an index or a key hash.
+     */
+    static fromMembers(members: GenesisRoster['members']): RosterMirror {
+        if (!Array.isArray(members)) {
             throw new Error('members must be an array')
         }
         const mirror = new RosterMirror()
-        for (const member of g.members) {
+        for (const member of members) {
             if (
                 typeof member.index !== 'number' ||
                 !Number.isInteger(member.index) ||
@@ -125,13 +145,6 @@ export class RosterMirror {
             )
             mirror.keyAt.set(member.index, key)
             mirror.indexByKey.set(key, member.index)
-        }
-        if (mirror.tree.root() !== g.rosterRoot.toLowerCase()) {
-            throw new Error(
-                `genesis members give root ${mirror.tree.root()}, not the deployed ${
-                    g.rosterRoot
-                }`
-            )
         }
         return mirror
     }

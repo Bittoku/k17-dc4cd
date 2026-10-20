@@ -8,7 +8,12 @@
  * below the chain's median time past. Since v3.1 the first cycle needs an
  * nLockTime at least 60 s after it (MIN_STEP). The optional `--dead-man`
  * interval makes the machine refund the beneficiary when no cycle ran for
- * that long.
+ * that long. A tree-mode program (v3.1) needs `--tree <members.json>` and
+ * `--sponsor`: the machine is deployed with the Merkle root of the member
+ * list and the sponsor's key hash, and then the sponsor's wallet publishes
+ * the list as a 1Sat inscription (see `src/chain/inscription.ts`). Both
+ * outpoints go into the config. If the inscription fails, the machine
+ * outpoint is already saved and `k17forth inscribe-genesis` finishes the job.
  * Mainnet needs the switch `--i-know-this-spends-real-money`.
  */
 
@@ -24,14 +29,26 @@ import {
     newMachine,
     rosterOf,
 } from 'k17-vm'
-import { ForthCompileError, compileToHex } from '../forth/compiler'
+import {
+    ForthCompileError,
+    compileToHex,
+    isTreeProgram,
+} from '../forth/compiler'
 import { sponsorMemory } from '../programs/consortium'
 import {
     GatewayConfig,
     hideSecrets,
     loadConfig,
+    saveGenesisInscription,
     saveMachine,
 } from '../chain/config'
+import {
+    GENESIS_CONTENT_TYPE,
+    broadcastInscription,
+    genesisRosterOf,
+    readMembersFile,
+} from '../chain/inscription'
+import { RosterMirror } from '../chain/roster'
 import { ChainInfo, chainInfo, makeSigner } from '../chain/provider'
 import { parseFlags } from './flags'
 import type { CliIo } from './k17forth'
@@ -41,11 +58,15 @@ export const DEPLOY_USAGE = `usage: k17forth deploy <file.fs> --config <gw.toml>
          --reward-min <sats> --slope <sats/s> --reward-max <sats>
          [--beneficiary <address>] [--roster <key1,key2,...>]
          [--initial-mem <hexfile> | --sponsor <keyhash|rabin public key>]
-         [--dead-man <seconds>]
+         [--dead-man <seconds>] [--tree <members.json>]
          [--network testnet|mainnet] [--i-know-this-spends-real-money]`
 
 /** Switch that allows a mainnet deployment. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
+
+/** Help line for tree-mode machines, shown with the tree usage errors. */
+const TREE_HINT =
+    'a tree-mode program needs --tree <members.json> and --sponsor <keyhash|rabin public key>'
 
 /** Parts of `deploy` that tests replace. */
 export interface DeployDeps {
@@ -58,7 +79,7 @@ export interface DeployDeps {
 }
 
 /** An error in the arguments: exit code 2. */
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 /**
  * Read a whole number of satoshis or seconds.
@@ -102,17 +123,26 @@ function rosterKeys(text: string): RabinPubKey[] {
 }
 
 /**
- * Memory image of `--sponsor`.
+ * Key hash of `--sponsor`.
  * Input: the sponsor's key hash (64 hex characters) or Rabin public key
- * (decimal or 0x hex). Output: memory hex with roster slot 0 set.
+ * (decimal or 0x hex). Output: the key hash, 64 lower-case hex characters.
+ * Throws a UsageError for anything else.
  */
-function sponsorImage(text: string): string {
-    if (/^[0-9a-fA-F]{64}$/.test(text)) return sponsorMemory(text)
-    if (/^(\d+|0x[0-9a-fA-F]+)$/.test(text))
-        return sponsorMemory(keyHash(BigInt(text)))
+function sponsorHash(text: string): string {
+    if (/^[0-9a-fA-F]{64}$/.test(text)) return text.toLowerCase()
+    if (/^(\d+|0x[0-9a-fA-F]+)$/.test(text)) return keyHash(BigInt(text))
     throw new UsageError(
         '--sponsor must be a 64 hex character key hash or a Rabin public key'
     )
+}
+
+/**
+ * Memory image of `--sponsor`.
+ * Input: the sponsor's key hash or Rabin public key (see `sponsorHash`).
+ * Output: memory hex with roster slot 0 set.
+ */
+function sponsorImage(text: string): string {
+    return sponsorMemory(sponsorHash(text))
 }
 
 /**
@@ -157,6 +187,7 @@ export async function deployCommand(
             'sponsor',
             'network',
             'dead-man',
+            'tree',
         ],
         [MAINNET_SWITCH]
     )
@@ -199,17 +230,43 @@ export async function deployCommand(
             rewardMax: wholeNumber('reward-max', flag('reward-max') as string),
             deadMan: deadManSeconds(flag('dead-man')),
         }
-        if (flag('initial-mem') && flag('sponsor'))
+        const treePath = flag('tree')
+        if (flag('initial-mem') && flag('sponsor') && !treePath)
             throw new UsageError('use --initial-mem or --sponsor, not both')
         const roster = rosterOf(
             flag('roster') ? rosterKeys(flag('roster') as string) : []
         )
         const memory = flag('initial-mem')
             ? memoryImage(flag('initial-mem') as string)
-            : flag('sponsor')
+            : flag('sponsor') && !treePath
             ? sponsorImage(flag('sponsor') as string)
             : undefined
         const prog = compileToHex(readFileSync(source, 'utf8'))
+        // Tree mode: the root and the sponsor go into the machine's fields.
+        if (treePath && !isTreeProgram(prog))
+            throw new UsageError(
+                `--tree needs a tree-mode program; ${source} uses no roster-tree instruction`
+            )
+        if (!treePath && isTreeProgram(prog))
+            throw new UsageError(
+                `${source} is a tree-mode program and would start with an empty roster and no sponsor; ${TREE_HINT}`
+            )
+        if (treePath && !flag('sponsor'))
+            throw new UsageError(`--tree needs --sponsor; ${TREE_HINT}`)
+        let members: ReturnType<typeof readMembersFile> = []
+        let tree: { rosterRoot: string; sponsorKeyHash: string } | undefined
+        if (treePath) {
+            try {
+                members = readMembersFile(treePath)
+            } catch (e) {
+                if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw e
+                throw new UsageError((e as Error).message)
+            }
+            tree = {
+                rosterRoot: RosterMirror.fromMembers(members).root(),
+                sponsorKeyHash: sponsorHash(flag('sponsor') as string),
+            }
+        }
         let signer: Signer
         try {
             signer = deps.signer ?? makeSigner(cfg)
@@ -236,7 +293,9 @@ export async function deployCommand(
             { beneficiary: addrOf(beneficiary), ...econNumbers },
             deployTime,
             roster,
-            memory
+            memory,
+            undefined,
+            tree
         )
         await m.connect(signer)
         const tx = await m.deploy(Number(deposit))
@@ -246,6 +305,33 @@ export async function deployCommand(
         io.out(`lastTime ${deployTime} (median time past ${mediantime})`)
         saveMachine(flag('config') as string, outpoint, m.instanceId)
         io.out(`wrote [machine] outpoint and instance_id to ${flag('config')}`)
+        if (!tree) return 0
+        // Publish the genesis roster from the sponsor's wallet.
+        const genesis = genesisRosterOf(m.instanceId, tree.rosterRoot, members)
+        let inscription: string
+        try {
+            inscription = await broadcastInscription(
+                signer,
+                GENESIS_CONTENT_TYPE,
+                Buffer.from(JSON.stringify(genesis), 'utf8')
+            )
+        } catch (e) {
+            io.err(
+                `deploy: the machine is deployed (${outpoint}), but the genesis inscription failed: ${hideSecrets(
+                    (e as Error).message ?? String(e),
+                    cfg
+                )}`
+            )
+            io.err(
+                `deploy: run again: k17forth inscribe-genesis ${flag(
+                    'config'
+                )} --tree ${treePath}`
+            )
+            return 1
+        }
+        saveGenesisInscription(flag('config') as string, inscription)
+        io.out(`genesis inscription ${inscription}`)
+        io.out(`wrote [machine] genesis_inscription to ${flag('config')}`)
         return 0
     } catch (e) {
         if (e instanceof UsageError) {

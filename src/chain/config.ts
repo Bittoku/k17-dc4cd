@@ -8,7 +8,8 @@
  * `describeConfig` shows a configuration with the secrets hidden. No error
  * message or description ever contains a secret value. `saveMachine`
  * writes a new `[machine]` outpoint and instance id into the file in place,
- * atomically, and keeps the file mode; `saveAttesterKey` writes a new
+ * atomically, and keeps the file mode; `saveGenesisInscription` adds the
+ * genesis roster inscription outpoint to `[machine]`; `saveAttesterKey` writes a new
  * `[attester]` key the same way with mode 600. Both use `writeTableEntries`.
  */
 
@@ -66,6 +67,8 @@ export interface GatewayConfig {
     machineOutpoint?: string
     /** Instance id of that machine, 64 hex characters (`[machine] instance_id`). */
     instanceId?: string
+    /** Outpoint (`txid:vout`) of the genesis roster inscription (`[machine] genesis_inscription`). */
+    genesisInscription?: string
     /** Roster slot of this gateway. */
     slot?: number
     /** Sign a reading even when the gateway thinks it is out of range. */
@@ -219,6 +222,11 @@ export function loadConfig(path: string): GatewayConfig {
         serial: optionalString('bridge', table(doc, 'bridge'), 'serial'),
         machineOutpoint: optionalString('machine', machine, 'outpoint'),
         instanceId: optionalString('machine', machine, 'instance_id'),
+        genesisInscription: optionalString(
+            'machine',
+            machine,
+            'genesis_inscription'
+        ),
         slot: slot as number | undefined,
         signAnyway: signAnyway === true,
         consortium: consortiumSettings(doc),
@@ -361,6 +369,16 @@ export function saveMachine(
         ['outpoint', outpoint],
         ['instance_id', instanceId],
     ])
+}
+
+/**
+ * Write the outpoint of the genesis roster inscription into a config file
+ * as `[machine] genesis_inscription`.
+ * Input: the file path and the outpoint (`txid:vout`). Output: none.
+ * Atomic, keeps the file mode (see `writeTableEntries`).
+ */
+export function saveGenesisInscription(path: string, outpoint: string): void {
+    writeTableEntries(path, 'machine', [['genesis_inscription', outpoint]])
 }
 
 /**

@@ -152,7 +152,10 @@ export class Gateway {
      */
     constructor(
         cfg: GatewayConfig,
-        provider: Pick<Provider, 'getTransaction' | 'getNetwork'>,
+        provider: Pick<
+            Provider,
+            'getTransaction' | 'getNetwork' | 'sendTransaction'
+        >,
         signer: Signer,
         options: GatewayOptions = {}
     ) {

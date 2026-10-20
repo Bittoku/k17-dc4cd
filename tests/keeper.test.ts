@@ -26,7 +26,12 @@ import {
     factoringBountyProgram,
     readSlot,
 } from 'k17-vm'
-import { Keeper, isConflictError, wocSpentBy } from '../src/chain/keeper'
+import {
+    Keeper,
+    broadcastCycle,
+    isConflictError,
+    wocSpentBy,
+} from '../src/chain/keeper'
 import {
     GatewayConfig,
     hideSecrets,
@@ -164,6 +169,97 @@ describe('keeper', function () {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             require('k17-vm/artifacts/k17Machine.json')
         )
+    })
+
+    it('a tick broadcasts a cycle transaction that has a change output', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        const sent: bsv.Transaction[] = []
+        const original = chain.sendTransaction.bind(chain)
+        chain.sendTransaction = async (tx: bsv.Transaction) => {
+            if (tx.inputs.some((input) => chain.spendsMachine(input)))
+                sent.push(tx)
+            return original(tx)
+        }
+        const result = await keeperOn(cfg, chain, signer).tick(T0 + 100)
+        expect(result.error).to.equal(undefined)
+        expect(sent).to.have.length(1)
+        expect(sent[0].inputs.length).to.be.greaterThan(1)
+        expect(sent[0].getChangeOutput()).to.not.equal(null)
+        expect(sent[0].id).to.equal(result.txid)
+    })
+
+    it('a cycle with fee inputs and no change output is refused before broadcast', async () => {
+        const { chain, signer } = setup()
+        const cfg = await deployed(chain, signer, heartbeatProgram())
+        // A wallet whose last signing step turns on a patch that makes
+        // bsv report no change output for a multi-input transaction, as a
+        // builder that left the change out would. The patch is restored in
+        // the finally block.
+        const proto = bsv.Transaction.prototype
+        const originalGetChange = proto.getChangeOutput
+        let hideChange = false
+        proto.getChangeOutput = function (this: bsv.Transaction) {
+            return hideChange && this.inputs.length > 1
+                ? null
+                : originalGetChange.call(this)
+        }
+        class NoChangeWallet extends TestWallet {
+            async getSignatures(
+                ...args: Parameters<TestWallet['getSignatures']>
+            ): ReturnType<TestWallet['getSignatures']> {
+                const signatures = await super.getSignatures(...args)
+                hideChange = true
+                return signatures
+            }
+        }
+        const dropper = new NoChangeWallet(WALLET_KEY, chain)
+        const before = chain.cycleBroadcasts
+        let result
+        try {
+            result = await keeperOn(cfg, chain, dropper).tick(T0 + 100)
+        } finally {
+            hideChange = false
+            proto.getChangeOutput = originalGetChange
+        }
+        expect(result.error).to.contain('no change output')
+        expect(chain.cycleBroadcasts).to.equal(before)
+    })
+
+    it('broadcastCycle refuses a two-input transaction without change and sends nothing', async () => {
+        const sent: bsv.Transaction[] = []
+        const provider = {
+            sendTransaction: async (tx: bsv.Transaction) => {
+                sent.push(tx)
+                return tx.id
+            },
+        }
+        const key = bsv.PrivateKey.fromRandom('testnet')
+        const tx = new bsv.Transaction()
+        for (const index of [0, 1])
+            tx.from({
+                txId: '11'.repeat(32),
+                outputIndex: index,
+                script: bsv.Script.fromAddress(key.toAddress()).toHex(),
+                satoshis: 10_000,
+            })
+        tx.addOutput(
+            new bsv.Transaction.Output({
+                script: bsv.Script.buildPublicKeyHashOut(key.toAddress()),
+                satoshis: 1000,
+            })
+        )
+        let thrown = ''
+        try {
+            await broadcastCycle(provider, tx)
+        } catch (e) {
+            thrown = (e as Error).message
+        }
+        expect(thrown).to.contain('no change output')
+        expect(sent).to.have.length(0)
+        tx.change(key.toAddress())
+        await broadcastCycle(provider, tx)
+        expect(sent).to.have.length(1)
     })
 
     it('tick advances a heartbeat machine, twice in a chain', async () => {
@@ -812,6 +908,32 @@ describe('deploy and keeper commands', function () {
         expect(printed).to.contain(`${txid}:0`)
         expect(printed).to.contain(m.instanceId)
         expect(printed).to.not.contain(WALLET_KEY.toWIF())
+    })
+
+    it('deploy --reward-min 0 is a usage error before any provider or signer call', async () => {
+        const config = configFile('gw-rm0.toml')
+        const before = readFileSync(config, 'utf8')
+        const { lines, io } = sink()
+        const args = ARGS(config)
+        args[args.indexOf('--reward-min') + 1] = '0'
+        let providerCalls = 0
+        const code = await deployCommand(args, io, {
+            signer: new Proxy({} as TestWallet, {
+                get: () => {
+                    providerCalls++
+                    throw new Error('signer must not be used')
+                },
+            }),
+            chainInfo: async () => {
+                providerCalls++
+                return { mediantime: T0, blocks: 1 }
+            },
+            now: () => T0,
+        })
+        expect(code).to.equal(2)
+        expect(lines.join('\n')).to.contain('--reward-min must be at least 1')
+        expect(providerCalls).to.equal(0)
+        expect(readFileSync(config, 'utf8')).to.equal(before)
     })
 
     it('deploy --dead-man refuses an interval below 6 hours and writes nothing', async () => {

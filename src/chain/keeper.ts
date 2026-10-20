@@ -34,6 +34,7 @@ import {
     K17Machine,
     NO_SIG,
     addrOf,
+    assertChangeOutput,
     bindCycleBuilder,
     outputLog,
     planCycle,
@@ -112,7 +113,27 @@ export interface KeeperOptions {
 }
 
 /** The provider calls the keeper uses. */
-type TxProvider = Pick<Provider, 'getTransaction' | 'getNetwork'>
+type TxProvider = Pick<
+    Provider,
+    'getTransaction' | 'getNetwork' | 'sendTransaction'
+>
+
+/**
+ * Check the change-output rule of a built cycle transaction, then broadcast
+ * it. The check runs first, so a transaction that fails it never reaches the
+ * provider.
+ * Input: the provider to broadcast through and the fully built and signed
+ * cycle transaction.
+ * Output: nothing. Throws (before any broadcast) when `assertChangeOutput`
+ * refuses the transaction, and throws whatever the provider throws.
+ */
+export async function broadcastCycle(
+    provider: Pick<Provider, 'sendTransaction'>,
+    tx: bsv.Transaction
+): Promise<void> {
+    assertChangeOutput(tx)
+    await provider.sendTransaction(tx)
+}
 
 /** The machine output that the keeper spends next. */
 interface Current {
@@ -459,8 +480,12 @@ export class Keeper {
                 toByteString(plan.leafPre),
                 toByteString(plan.proof),
                 plan.leafIndex,
-                options
+                // scrypt-ts adds the fee inputs and the change output and
+                // signs, but does not broadcast; `broadcastCycle` checks the
+                // change output and then sends.
+                { ...options, partiallySigned: true }
             )
+            await broadcastCycle(this.provider, tx)
             const logged = outputLog(plan.nextState).slice(
                 outputLog(stateOf(m)).length
             )

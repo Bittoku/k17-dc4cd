@@ -70,7 +70,10 @@ const MTP_HINT =
 /** Parts of `endorse` that tests replace. */
 export interface EndorseDeps {
     /** Provider to read transactions. Default: `makeProvider` of the config. */
-    provider?: Pick<Provider, 'getTransaction' | 'getNetwork'>
+    provider?: Pick<
+        Provider,
+        'getTransaction' | 'getNetwork' | 'sendTransaction'
+    >
     /** Wallet signer. Default: `makeSigner` of the config. */
     signer?: Signer
     /** Options of the keeper (chain info, spends lookup). */

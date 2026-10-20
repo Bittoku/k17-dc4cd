@@ -26,7 +26,10 @@ const MAINNET_SWITCH = 'i-know-this-spends-real-money'
 /** Parts of `keeper` that tests replace. */
 export interface KeeperCommandDeps {
     /** Provider to read transactions. Default: `makeProvider` of the config. */
-    provider?: Pick<Provider, 'getTransaction' | 'getNetwork'>
+    provider?: Pick<
+        Provider,
+        'getTransaction' | 'getNetwork' | 'sendTransaction'
+    >
     /** Wallet signer. Default: `makeSigner` of the config. */
     signer?: Signer
     /** Options of the keeper (chain info, spends lookup). */

@@ -45,7 +45,10 @@ export interface GatewayCommandDeps {
     /** Make the Rabin key (init). Default: `newAttester()`. */
     generate?: () => Attester
     /** Provider to read transactions (run). Default: `makeProvider`. */
-    provider?: Pick<Provider, 'getTransaction' | 'getNetwork'>
+    provider?: Pick<
+        Provider,
+        'getTransaction' | 'getNetwork' | 'sendTransaction'
+    >
     /** Wallet signer (run). Default: `makeSigner` of the config. */
     signer?: Signer
     /** Readings (run). Default: the bridge of the config. */

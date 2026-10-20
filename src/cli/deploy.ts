@@ -134,7 +134,9 @@ function memoryImage(path: string): string {
  * Run the deploy sub-command.
  * Input: arguments after `deploy`, an output sink and optional test parts.
  * Output: exit code: 0 on success, 1 when compile, chain or file work
- * fails, 2 on wrong arguments or a refused mainnet deployment.
+ * fails, 2 on wrong arguments (including a --reward-min below 1 satoshi,
+ * refused before any signing or network work) or a refused mainnet
+ * deployment.
  */
 export async function deployCommand(
     args: string[],
@@ -185,8 +187,14 @@ export async function deployCommand(
         const deposit = wholeNumber('deposit', flag('deposit') as string)
         if (deposit < 1n || deposit > BigInt(Number.MAX_SAFE_INTEGER))
             throw new UsageError('--deposit must be at least 1 satoshi')
+        const rewardMin = wholeNumber(
+            'reward-min',
+            flag('reward-min') as string
+        )
+        if (rewardMin < 1n)
+            throw new UsageError('--reward-min must be at least 1 satoshi')
         const econNumbers = {
-            rewardMin: wholeNumber('reward-min', flag('reward-min') as string),
+            rewardMin,
             slope: wholeNumber('slope', flag('slope') as string),
             rewardMax: wholeNumber('reward-max', flag('reward-max') as string),
             deadMan: deadManSeconds(flag('dead-man')),

@@ -27,7 +27,8 @@
  *   3. Reading (witness: 0 reading):
  *        VERIFY TIME >= start, compute the round,
  *        MEMBER DROP                  bind the member (the index is unused),
- *        VERIFY lastRound < round     one payment per member per round,
+ *        (no explicit lastRound check: PAYLEAF itself makes the transaction
+ *        invalid when round <= lastRound, so a member is paid once a round),
  *        IN the reading, VERIFY the range (when one is set),
  *        ATTESTM readingTag(round) reading   signed by the member's key,
  *        OUTH the reading             fold it into the log hash,
@@ -41,8 +42,10 @@
  *
  * Instruction budget: every branch, from the first instruction of a cycle
  * to its YIELD or HALT, is at most 40 instructions (K17Machine.K). The
- * reading branch is the longest: 40 with a range check, 34 without (see
- * tests/treeConsortium.test.ts). Three choices keep it inside K:
+ * reading branch is the longest: 36 with a range check (34 when the range
+ * starts at 0), 30 without, counted after a YIELD; the program's first
+ * cycle is one less (see tests/treeConsortium.test.ts). Three choices keep
+ * it short:
  *   - The selector stays on the data stack. On every branch it is 0 at the
  *     YIELD (the reading branch has selector 0; the admin branches reduce
  *     it to 0), and `until` consumes it as the loop's jump-back flag.
@@ -90,7 +93,12 @@ export const REMOVE_TAG = 0x4c000000
 const CELL_MAX = 0xffffffff
 /** Cell modulus (2^32). */
 const CELL_MOD = 0x100000000
-/** Rounds are below 2^28, so reading tags stay below ADMIT_TAG. */
+/**
+ * readingTag accepts rounds below 2^28 (ruling 1). The tags a program
+ * actually checks stay far below ADMIT_TAG: END = start + rounds * period
+ * fits a cell and period >= 60, so rounds < 2^32 / 60 < 2^27 and every
+ * reading tag is below READING_TAG_BASE + 2^27 < ADMIT_TAG.
+ */
 const ROUND_LIMIT = 0x10000000
 /** Shortest round: one MIN_STEP, the least spacing of two live cycles. */
 const MIN_PERIOD = 60
@@ -170,7 +178,10 @@ export function treeConsortiumSource(opts: TreeConsortiumOptions): string {
         const width = max - min + 1
         // A range of the whole cell accepts everything: no check.
         if (width <= CELL_MAX)
-            rangeCheck = `    dup ${min} - ${width} / if 0 verify then  \\ ${min} <= reading <= ${max}\n`
+            // With min = 0 the subtraction is a no-op: leave it out.
+            rangeCheck = `    dup ${
+                min === 0 ? '' : `${min} - `
+            }${width} / if 0 verify then  \\ ${min} <= reading <= ${max}\n`
     }
     const settings = [
         `start=${start}`,
@@ -206,7 +217,6 @@ begin
     time ${start} / verify  \\ TIME >= start (rounds start at 1)
     ${bountyPerReading} time ${roundBase} - ${period} /  ( 0 bounty round )
     member drop  \\ verify the proof, bind the member; the leaf index is unused
-    lastround over / if 0 verify then  \\ lastRound < round: not yet paid this round
     dup ${READING_TAG_BASE} + in  ( 0 bounty round tag reading )
 ${rangeCheck}    swap over attestm  ( 0 bounty round reading )  \\ signed by the member under readingTag(round)
     outh  ( 0 bounty round )  \\ fold the reading into the log hash

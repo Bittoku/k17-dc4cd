@@ -287,6 +287,26 @@ describe('tree consortium: generator', () => {
         expect(() => readingTag(0x10000000)).to.throw(/round/)
         expect(() => readingTag(-1)).to.throw(/round/)
         expect(() => readingTag(1.5)).to.throw(/round/)
+        // the longest valid machine (start 60, period 60) still has every
+        // reading tag below ADMIT_TAG: rounds < 2^32 / 60 < 2^27
+        const maxRounds = Math.floor((0xffffffff - 60) / 60)
+        expect(() =>
+            treeConsortiumSource({
+                ...OPTS,
+                start: 60,
+                period: 60,
+                rounds: maxRounds,
+            })
+        ).not.to.throw()
+        expect(() =>
+            treeConsortiumSource({
+                ...OPTS,
+                start: 60,
+                period: 60,
+                rounds: maxRounds + 1,
+            })
+        ).to.throw(/END/)
+        expect(readingTag(maxRounds) < BigInt(ADMIT_TAG)).to.equal(true)
     })
 
     it('computes roundAt at the round boundaries', () => {
@@ -343,11 +363,18 @@ describe('tree consortium: generator', () => {
             for (const n of counts)
                 expect(n, JSON.stringify(opts)).to.be.at.most(K17Machine.K)
         }
-        // with a range check, the reading branch after a YIELD is exactly K
-        const withRange = longestBranches(
-            compile(treeConsortiumSource(OPTS)).tokens
-        )
-        expect(Math.max(...withRange)).to.equal(40)
+        // the reading branch after a YIELD: 36 with a range, 34 with a
+        // range from 0 (no subtraction), 30 without
+        const longest = (opts: TreeConsortiumOptions) =>
+            Math.max(
+                ...longestBranches(compile(treeConsortiumSource(opts)).tokens)
+            )
+        expect(longest(OPTS)).to.equal(36)
+        expect(longest({ ...OPTS, range: { min: 0, max: 100 } })).to.equal(34)
+        expect(longest({ ...OPTS, range: undefined })).to.equal(30)
+        expect(treeConsortiumSource({ ...OPTS, range: { min: 0, max: 100 } }))
+            .to.contain('dup 101 / if 0 verify then')
+            .and.not.contain(' 0 - ')
         expect(isTreeProgram(treeConsortiumProgram(OPTS))).to.equal(true)
     })
 })
@@ -360,7 +387,7 @@ describe('tree consortium: reference VM', function () {
     it("pays a genesis member's round-1 reading and sets lastRound = 1", () => {
         const m = freshMachine()
         const env = envAt(inRound(1), reading(m, alice, ALICE_INDEX, 1, 5231n))
-        expect(executedCount(m.state, env)).to.equal(39) // first cycle: no 'until' jump
+        expect(executedCount(m.state, env)).to.equal(35) // first cycle: no 'until' jump
         const { next, out } = accept(m, env, ALICE_INDEX)
         expect(out.payslot).to.deep.equal({
             slot: -1,
@@ -390,6 +417,7 @@ describe('tree consortium: reference VM', function () {
             m.state,
             envAt(inRound(1, 200), reading(m, alice, ALICE_INDEX, 1, 5232n))
         )
+        // refused by PAYLEAF itself: round 1 is not above lastRound 1
         expect(again.status).to.equal('verify_failed')
         // a round-1 signature relayed in round 2 does not match the tag
         const stale = runCycle(
@@ -398,7 +426,7 @@ describe('tree consortium: reference VM', function () {
         )
         expect(stale.status).to.equal('verify_failed')
         const env = envAt(inRound(2), reading(m, alice, ALICE_INDEX, 2, 5240n))
-        expect(executedCount(m.state, env)).to.equal(40) // after a YIELD
+        expect(executedCount(m.state, env)).to.equal(36) // after a YIELD
         const { next, out } = accept(m, env, ALICE_INDEX)
         expect(out.payslot?.sats).to.equal(150n)
         expect(lastRoundOf(next, ALICE_INDEX)).to.equal(2n)
@@ -585,6 +613,45 @@ describe('tree consortium: reference VM', function () {
         expect(late.witnessUsed).to.equal(0)
     })
 
+    it('pays in rounds 1 and 2 when start < period (wrapped round base)', () => {
+        const opts: TreeConsortiumOptions = {
+            start: 30,
+            period: 60,
+            rounds: 3,
+            bountyPerReading: 150,
+        }
+        let m = freshMachine(opts)
+        // before start: refused
+        const early = runCycle(
+            m.state,
+            envAt(29n, reading(m, alice, ALICE_INDEX, 1, 7n))
+        )
+        expect(early.status).to.equal('verify_failed')
+        const times: [bigint, number][] = [
+            [30n, 1], // round 1 opens at start
+            [90n, 2], // start + period: round 2
+        ]
+        for (const [t, round] of times) {
+            expect(roundAt(opts, Number(t))).to.equal(round)
+            const r = accept(
+                m,
+                envAt(t, reading(m, alice, ALICE_INDEX, round, 7n)),
+                ALICE_INDEX
+            )
+            expect(r.out.payslot?.sats, `t = ${t}`).to.equal(150n)
+            m = r.next
+            expect(lastRoundOf(m, ALICE_INDEX)).to.equal(BigInt(round))
+        }
+        // the round-2 signature again in round 2 (t = 149) is refused
+        const again = runCycle(
+            m.state,
+            envAt(149n, reading(m, alice, ALICE_INDEX, 2, 7n))
+        )
+        expect(again.status).to.equal('verify_failed')
+        // END = 210 halts
+        expect(runCycle(m.state, envAt(210n)).status).to.equal('halted')
+    })
+
     it('halts and refunds when the bounty is unaffordable', () => {
         const opts = { ...OPTS, bountyPerReading: FUNDING }
         const tree = genesisTree()
@@ -644,7 +711,7 @@ describe('tree consortium: on chain', function () {
 
     before(loadMachineArtifact)
 
-    it('runs a paid reading, an admission, a removal and the end halt', async () => {
+    it('runs admissions (round 0 and round 1), paid readings, a removal and the end halt', async () => {
         const tree = genesisTree()
         const m0 = newMachine(
             treeConsortiumProgram(OPTS),
@@ -658,87 +725,110 @@ describe('tree consortium: on chain', function () {
         await m0.connect(getDefaultSigner())
         await m0.deploy(FUNDING)
         const id = m0.instanceId
+        let machine = m0
+        let value = BigInt(FUNDING)
+        let seq = 0n
 
-        // cycle 1 (round 1): Alice's reading, paid by PAYLEAF
-        const t1 = BigInt(START)
-        const r1 = await cycle(
-            m0,
-            BigInt(FUNDING),
-            t1,
-            [0n, 5231n],
-            signMemberReading(alice, id, readingTag(1), 5231n),
-            { attestKey: alice.pub },
-            tree.proof(ALICE_INDEX)
-        )
-        expect(r1.plan.halted).to.equal(false)
-        expect(r1.plan.payslot?.sats).to.equal(150n)
-        expect(r1.plan.payslot?.payoutHex).to.equal(ALICE_PAYOUT)
-        tree.set(ALICE_INDEX, r1.plan.leafAfter as string)
-        expect(
-            lastRoundOf({ state: r1.plan.nextState, tree }, ALICE_INDEX)
-        ).to.equal(1n)
+        /** Run one script-verified cycle and advance machine, value and mirror. */
+        const step = async (
+            lockTime: bigint,
+            witness: bigint[] = [],
+            sig?: ReturnType<typeof signMemberReading>,
+            keys = {},
+            index?: number
+        ) => {
+            const r = await cycle(
+                machine,
+                value,
+                lockTime,
+                witness,
+                sig,
+                keys,
+                index === undefined ? undefined : tree.proof(index)
+            )
+            if (index !== undefined && r.plan.leafAfter !== undefined)
+                tree.set(index, r.plan.leafAfter)
+            if (r.next) machine = r.next
+            value = r.plan.remaining
+            return r
+        }
+        const admit = (lockTime: bigint) =>
+            step(
+                lockTime,
+                [1n],
+                signAdmission(
+                    sponsor,
+                    id,
+                    BigInt(ADMIT_TAG),
+                    seq++,
+                    BigInt(BOB_INDEX),
+                    bob.pub,
+                    BOB_PAYOUT
+                ),
+                {
+                    attestKey: sponsor.pub,
+                    endorseKey: bob.pub,
+                    payoutHex: BOB_PAYOUT,
+                },
+                BOB_INDEX
+            )
+        const read = (lockTime: bigint, round: number, v: bigint) =>
+            step(
+                lockTime,
+                [0n, v],
+                signMemberReading(alice, id, readingTag(round), v),
+                { attestKey: alice.pub },
+                ALICE_INDEX
+            )
+        const lastRound = (index: number) =>
+            decodeLeafPre(tree.get(index) as string).lastRound
 
-        // cycle 2: the sponsor admits Bob (round 1)
-        const t2 = t1 + 60n
-        const m1 = r1.next as K17Machine
-        const r2 = await cycle(
-            m1,
-            r1.plan.remaining,
-            t2,
-            [1n],
-            signAdmission(
-                sponsor,
-                id,
-                BigInt(ADMIT_TAG),
-                0n,
-                BigInt(BOB_INDEX),
-                bob.pub,
-                BOB_PAYOUT
-            ),
-            {
-                attestKey: sponsor.pub,
-                endorseKey: bob.pub,
-                payoutHex: BOB_PAYOUT,
-            },
-            tree.proof(BOB_INDEX)
-        )
-        expect(r2.plan.treeOp).to.equal('admit')
-        tree.set(BOB_INDEX, r2.plan.leafAfter as string)
-        expect(
-            lastRoundOf({ state: r2.plan.nextState, tree }, BOB_INDEX)
-        ).to.equal(1n)
+        // cycle 1 (first cycle, before start): the sponsor admits Bob in round 0
+        const c1 = await admit(T0 + 60n)
+        expect(c1.plan.treeOp).to.equal('admit')
+        expect(lastRound(BOB_INDEX)).to.equal(0n)
+
+        // cycle 2 (after a YIELD, round 1): Alice's reading, the longest path
+        const c2 = await read(BigInt(START), 1, 5231n)
+        expect(c2.plan.halted).to.equal(false)
+        expect(c2.plan.payslot?.sats).to.equal(150n)
+        expect(c2.plan.payslot?.payoutHex).to.equal(ALICE_PAYOUT)
+        expect(lastRound(ALICE_INDEX)).to.equal(1n)
 
         // cycle 3: the sponsor removes Bob
-        const t3 = t2 + 60n
-        const r3 = await cycle(
-            r2.next as K17Machine,
-            r2.plan.remaining,
-            t3,
+        const c3 = await step(
+            BigInt(START) + 60n,
             [2n],
             signRemoval(
                 sponsor,
                 id,
                 BigInt(REMOVE_TAG),
-                1n,
+                seq++,
                 BigInt(BOB_INDEX),
                 keyHash(bob.pub),
                 BOB_PAYOUT
             ),
             { attestKey: sponsor.pub },
-            tree.proof(BOB_INDEX)
+            BOB_INDEX
         )
-        expect(r3.plan.treeOp).to.equal('remove')
-        tree.set(BOB_INDEX, '')
-        expect(r3.plan.nextState.rosterRoot).to.equal(tree.root())
+        expect(c3.plan.treeOp).to.equal('remove')
+        expect(tree.get(BOB_INDEX)).to.equal(undefined)
+        expect(c3.plan.nextState.rosterRoot).to.equal(tree.root())
 
-        // cycle 4: at END the machine halts with no witness and refunds
-        const r4 = await cycle(
-            r3.next as K17Machine,
-            r3.plan.remaining,
-            BigInt(END)
-        )
-        expect(r4.plan.halted).to.equal(true)
-        expect(r4.plan.witnessHex).to.equal('')
-        expect(r4.next).to.equal(undefined)
+        // cycle 4: the sponsor admits Bob again, in round 1
+        await admit(BigInt(START) + 120n)
+        expect(lastRound(BOB_INDEX)).to.equal(1n)
+
+        // cycle 5 (round 2): Alice's second reading, after the admin cycles
+        const c5 = await read(BigInt(START + PERIOD), 2, 5240n)
+        expect(c5.plan.payslot?.sats).to.equal(150n)
+        expect(lastRound(ALICE_INDEX)).to.equal(2n)
+        expect(c5.plan.nextState.rosterRoot).to.equal(tree.root())
+
+        // cycle 6: at END the machine halts with no witness and refunds
+        const c6 = await step(BigInt(END))
+        expect(c6.plan.halted).to.equal(true)
+        expect(c6.plan.witnessHex).to.equal('')
+        expect(c6.next).to.equal(undefined)
     })
 })

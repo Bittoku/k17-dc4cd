@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Entry point of the k17forth tool: dispatches to the `compile`, `run`,
- * `repl`, `inspect`, `deploy`, `inscribe-genesis`, `endorse`, `keeper` and
+ * `repl`, `inspect`, `deploy`, `inscribe-genesis`, `admit`, `remove`, `endorse`, `keeper` and
  * `gateway` sub-commands. `main` takes the arguments and an output sink so
  * tests can call it without a process.
  */
@@ -13,6 +13,7 @@ import { inspectCommand } from './inspect'
 import { deployCommand } from './deploy'
 import { inscribeGenesisCommand } from './inscribeGenesis'
 import { endorseCommand } from './endorse'
+import { admitCommand, removeCommand } from './admit'
 import { keeperCommand } from './keeper'
 import { gatewayCommand } from './gateway'
 import { loadK17Artifact } from '../chain/artifact'
@@ -22,6 +23,8 @@ const CHAIN_COMMANDS = [
     'inspect',
     'deploy',
     'inscribe-genesis',
+    'admit',
+    'remove',
     'endorse',
     'keeper',
     'gateway',
@@ -59,6 +62,10 @@ commands:
                                           and inscribes its genesis roster
   inscribe-genesis <gw.toml> --tree <members.json>
                                           inscribe the genesis roster of a deployed tree machine
+  admit <sponsor.toml> --member-key <pubkey file> --payout <addr> [--index <n>]
+                                          sponsor: admit a member into a tree-mode roster
+  remove <sponsor.toml> (--member-key <pubkey file> | --index <n>)
+                                          sponsor: remove a member from a tree-mode roster
   endorse --config <sponsor.toml> --member <public key hex> --payout <addr> --slot <n>
                                           sponsor: enrol a landowner's key into a roster slot
   keeper --config <gw.toml> [--interval <seconds>]
@@ -95,6 +102,10 @@ export function main(
             return deployCommand(rest, io)
         case 'inscribe-genesis':
             return inscribeGenesisCommand(rest, io)
+        case 'admit':
+            return admitCommand(rest, io)
+        case 'remove':
+            return removeCommand(rest, io)
         case 'endorse':
             return endorseCommand(rest, io)
         case 'keeper':

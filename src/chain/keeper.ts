@@ -31,6 +31,7 @@
 import { Provider, Signer, bsv, toByteString } from 'scrypt-ts'
 import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
 import {
+    CycleTree,
     K17Machine,
     NO_SIG,
     addrOf,
@@ -55,8 +56,14 @@ export interface PendingInput {
     attestKey?: RabinPubKey
     /** New member's key (ENDORSE). */
     endorseKey?: RabinPubKey
-    /** New member's 20-byte payout, 40 hex characters (ENDORSE). */
+    /** New member's 20-byte payout, 40 hex characters (ENDORSE, ADMIT). */
     payoutHex?: string
+    /**
+     * The cycle's roster-tree proof (tree mode): leaf preimage, 16 siblings
+     * and leaf index, as `RosterMirror.proofFor` gives them. Not set for
+     * a machine without a roster tree.
+     */
+    tree?: CycleTree
 }
 
 /**
@@ -455,7 +462,8 @@ export class Keeper {
                     attestKey: input?.attestKey,
                     endorseKey: input?.endorseKey,
                     payoutHex: input?.payoutHex,
-                }
+                },
+                input?.tree
             )
         } catch (e) {
             const message = messageOf(e)

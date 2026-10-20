@@ -11,8 +11,29 @@
  */
 
 import { bsv } from 'scrypt-ts'
-import { RabinSig } from 'scrypt-ts-lib'
-import { CycleTree, K17Machine, planCycle, pubKeyFromBytes } from 'k17-vm'
+import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
+import {
+    CELL,
+    CycleTree,
+    K17Machine,
+    K17State,
+    Op,
+    PaySlot,
+    SparseMerkleTree,
+    StepEnv,
+    TreeOp,
+    BoundMember,
+    decodeCell,
+    decodeLeafPre,
+    deadManDue,
+    encodeLeafPre,
+    keyHash,
+    planCycle,
+    pubKeyFromBytes,
+    step,
+    stateOf,
+    whoOf,
+} from 'k17-vm'
 import { decodeCells } from '../cli/scenario'
 import { DecodedInstance, DecodedMachine, decodeInstance } from './decode'
 
@@ -50,6 +71,31 @@ export interface DecodedCycle {
     halted: boolean
     /** Machine state after the cycle, or null when halted. */
     state: DecodedMachine | null
+    /**
+     * The roster-tree operation that the replay found ('none' when the cycle
+     * ran no tree instruction, and when the cycle is ambiguous).
+     */
+    treeOp: TreeOp
+    /**
+     * The tree arguments of the unlocking script (leafPre, proof, leafIndex);
+     * undefined for a 7-chunk (v2) script or an unreadable one.
+     */
+    tree?: CycleTree
+    /**
+     * Roster tree root after the cycle (64 hex): from the next machine
+     * output, or from the replayed state when the machine halted. For an
+     * ambiguous halted cycle it is the root before the cycle (unknown change).
+     */
+    rosterRoot: string
+    /** `rosterSeq` after the cycle (same sources as `rosterRoot`). */
+    rosterSeq: bigint
+    /**
+     * The leaf preimage that the cycle wrote at `tree.leafIndex`: 120 hex
+     * characters for an admission or a leaf payment, '' for a removal.
+     * Undefined when the cycle left the tree unchanged or is ambiguous.
+     * The replay checks that this leaf gives the replayed root.
+     */
+    leafAfter?: string
 }
 
 /** A transaction output reference. */
@@ -117,10 +163,15 @@ function chunkNumber(chunk: ScriptChunk): bigint {
     return bytes[bytes.length - 1] & 0x80 ? -magnitude : magnitude
 }
 
-/** The reward and payout that a replay of the cycle gives. */
+/** What a replay of the cycle gives. */
 interface Replay {
     reward: number
     payout?: PayoutOutput
+    treeOp: TreeOp
+    /** Root and seq after the cycle, from the replayed state. */
+    rosterRoot: string
+    rosterSeq: bigint
+    leafAfter?: string
 }
 
 /** The arguments of `step` that an unlocking script carries. */
@@ -170,6 +221,118 @@ export function decodeUnlocking(
 }
 
 /**
+ * Find the ROUND that an ADMIT or PAYLEAF instruction used in a cycle.
+ * The planner does not report it, so this runs the cycle again on the
+ * reference VM, one instruction at a time, and reads the top of the data
+ * stack just before the first ADMIT or PAYLEAF that succeeds. ROUND is the
+ * top cell for both (ADMIT: TAG ROUND; PAYLEAF: N ROUND).
+ * Input: the machine before the cycle, the step environment of the cycle
+ * (same as the planner uses) and the cycle length K.
+ * Output: the ROUND, or undefined when no such instruction succeeded.
+ */
+function recoverRound(
+    previous: K17Machine,
+    env: StepEnv,
+    cycleLength: number
+): bigint | undefined {
+    if (deadManDue(env)) return undefined
+    let state: K17State = stateOf(previous)
+    let witnessIndex = 0
+    let bounty = 0n
+    let sigUsed = false
+    let payslot: PaySlot | undefined
+    let treeOp: TreeOp = 'none'
+    let member: BoundMember | undefined
+    for (let i = 0; i < cycleLength; i++) {
+        const program = Buffer.from(state.prog, 'hex')
+        const op = program[Number(state.pc)]
+        const top =
+            state.ds.length >= CELL * 2
+                ? decodeCell(state.ds.slice(-CELL * 2))
+                : undefined
+        const result = step(
+            state,
+            env,
+            witnessIndex,
+            bounty,
+            sigUsed,
+            payslot,
+            treeOp,
+            member
+        )
+        if (result.status === 'need_witness' || result.status === 'fault')
+            return undefined
+        if (result.status === 'verify_failed') return undefined
+        if ((op === Op.ADMIT || op === Op.PAYLEAF) && top !== undefined)
+            return top
+        state = result.state
+        witnessIndex = result.witnessIndex
+        bounty = result.bountyDue
+        sigUsed = result.sigUsed
+        payslot = result.payslot
+        treeOp = result.treeOp
+        member = result.member
+        if (result.status !== 'ok') return undefined
+    }
+    return undefined
+}
+
+/**
+ * Work out the tree change of a replayed cycle.
+ * For an admission the new leaf is the key in `keyB`, the payout and the
+ * ROUND; for a leaf payment it is the decoded leaf with the new ROUND; for
+ * a removal it is the empty leaf. The leaf is only reported when it gives
+ * exactly the root that the replay reached.
+ * Input: the machine before the cycle, the tree operation, the replayed
+ * root and seq after the cycle, the unlocking arguments, the step
+ * environment, and the replayed `rosterSeq`.
+ * Output: treeOp, rosterRoot, rosterSeq and leafAfter, or null when the
+ * leaf that the arguments imply does not give the replayed root.
+ */
+function replayTree(
+    machine: K17Machine,
+    treeOp: TreeOp,
+    replayedRoot: string,
+    args: UnlockingArguments,
+    env: StepEnv,
+    replayedSeq: bigint
+): Pick<Replay, 'treeOp' | 'rosterRoot' | 'rosterSeq' | 'leafAfter'> | null {
+    const base = { treeOp, rosterRoot: replayedRoot, rosterSeq: replayedSeq }
+    const tree = args.tree
+    if (treeOp === 'none' || !tree) return base
+    const rootWith = (leafPre: string): string =>
+        SparseMerkleTree.rootAfter(leafPre, tree.proof, tree.leafIndex)
+    if (treeOp === 'remove') {
+        if (rootWith('') !== replayedRoot) return null
+        return { ...base, leafAfter: '' }
+    }
+    const round = recoverRound(machine, env, K17Machine.K)
+    if (treeOp === 'admit') {
+        if (round === undefined || !args.keyBHex) return null
+        const leafAfter = encodeLeafPre(
+            keyHash(pubKeyFromBytes(args.keyBHex)),
+            args.payoutHex,
+            round,
+            0n
+        )
+        if (rootWith(leafAfter) !== replayedRoot) return null
+        return { ...base, leafAfter }
+    }
+    // 'member': the leaf changes only when PAYLEAF paid; then the root moved.
+    if (replayedRoot === machine.rosterRoot) return base
+    if (round === undefined) return null
+    const old = decodeLeafPre(tree.leafPre)
+    const leafAfter = encodeLeafPre(
+        old.keyHashHex,
+        old.payoutHex,
+        round,
+        old.flags
+    )
+    if (rootWith(leafAfter) !== replayedRoot) return null
+    return { ...base, leafAfter }
+}
+
+/**
  * Replay a cycle with the reference code to find the keeper reward and the
  * payout, then check them against the real outputs.
  * The unlocking script of input 0 is read by `decodeUnlocking`. Output 0
@@ -189,20 +352,27 @@ function replayCycle(
     try {
         const args = decodeUnlocking(tx.inputs[0].script.chunks)
         if (!args || !previous.instance) return null
+        const machine = previous.instance as K17Machine
+        const keeperAddress = bsv.Address.fromPublicKeyHash(
+            Buffer.from(args.keeperHex, 'hex')
+        )
+        const witness = decodeCells(args.witnessHex)
+        const attestKey = args.keyAHex
+            ? pubKeyFromBytes(args.keyAHex)
+            : undefined
+        const endorseKey = args.keyBHex
+            ? pubKeyFromBytes(args.keyBHex)
+            : undefined
         const plan = planCycle(
-            previous.instance as K17Machine,
+            machine,
             BigInt(previousValue),
             BigInt(tx.nLockTime),
-            bsv.Address.fromPublicKeyHash(Buffer.from(args.keeperHex, 'hex')),
-            decodeCells(args.witnessHex),
+            keeperAddress,
+            witness,
             args.sig,
             {
-                attestKey: args.keyAHex
-                    ? pubKeyFromBytes(args.keyAHex)
-                    : undefined,
-                endorseKey: args.keyBHex
-                    ? pubKeyFromBytes(args.keyBHex)
-                    : undefined,
+                attestKey,
+                endorseKey,
                 payoutHex: args.payoutHex || undefined,
             },
             args.tree
@@ -215,7 +385,34 @@ function replayCycle(
         if (rest.length < expected.length) return null
         if (expected.some((sats, i) => rest[i].satoshis !== sats)) return null
         const reward = plan.reward > 0n ? Number(plan.reward) : 0
-        if (!plan.payslot) return { reward }
+        const treeFields = replayTree(
+            machine,
+            plan.treeOp,
+            plan.nextState.rosterRoot,
+            args,
+            {
+                lockTime: BigInt(tx.nLockTime),
+                who: whoOf(args.keeperHex),
+                witness,
+                roster: (machine.roster as unknown as RabinPubKey[]).slice(),
+                sig: args.sig.s === 0n ? undefined : args.sig,
+                attestKey,
+                endorseKey,
+                payout: args.payoutHex || undefined,
+                value: BigInt(previousValue),
+                instanceId: machine.instanceId,
+                tree: args.tree && {
+                    leafPre: args.tree.leafPre.toLowerCase(),
+                    proof: args.tree.proof.toLowerCase(),
+                    leafIndex: args.tree.leafIndex,
+                },
+                deadMan: machine.deadMan,
+                lastTime: machine.lastTime,
+            },
+            plan.nextState.rosterSeq
+        )
+        if (!treeFields) return null
+        if (!plan.payslot) return { reward, ...treeFields }
         const index = plan.reward > 0n ? 1 : 0
         const hash = p2pkhHash(rest[index].script.toHex())
         if (hash !== plan.payslot.payoutHex) return null
@@ -227,6 +424,7 @@ function replayCycle(
                 addressHex: hash,
                 slot: plan.payslot.slot,
             },
+            ...treeFields,
         }
     } catch {
         return null
@@ -275,6 +473,7 @@ export async function walkHistory(
         if (!previous || !previous.machine) break // this transaction is the deployment
         const after = decode(tx.outputs[0].script.toHex())
         const replay = replayCycle(tx, previous, previousOut.satoshis)
+        const unlocking = decodeUnlocking(tx.inputs[0].script.chunks)
         cycles.push({
             txid: tx.id,
             lockTime: tx.nLockTime,
@@ -283,6 +482,19 @@ export async function walkHistory(
             ambiguous: replay === null,
             halted: !after.machine,
             state: after.machine,
+            treeOp: replay ? replay.treeOp : 'none',
+            tree: unlocking?.tree,
+            rosterRoot: after.instance
+                ? after.instance.rosterRoot
+                : replay
+                ? replay.rosterRoot
+                : (previous.instance as K17Machine).rosterRoot,
+            rosterSeq: after.instance
+                ? after.instance.rosterSeq
+                : replay
+                ? replay.rosterSeq
+                : (previous.instance as K17Machine).rosterSeq,
+            leafAfter: replay?.leafAfter,
         })
         txid = previousTxid
     }

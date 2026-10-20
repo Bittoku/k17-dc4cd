@@ -467,10 +467,14 @@ const TREE_OPCODE_LAST = Op.OUTH
  * ATTESTM, PAYLEAF, ADMIT, REMOVE, OUTH; opcodes 0x24..0x2a). The bytecode is
  * decoded linearly and the 4-byte operand of each operand-carrying opcode
  * (k17-vm `HAS_OPERAND`) is skipped, so operand bytes never count as opcodes.
- * Input: program hex string (optional 0x prefix not accepted). Output: true
- * when any decoded opcode is a tree instruction, otherwise false.
+ * Input: program hex string, an even number of hex digits with no 0x prefix
+ * (the empty string is a valid empty program). Output: true when any decoded
+ * opcode is a tree instruction, otherwise false. Throws an Error on odd-length
+ * or non-hex input, because Buffer.from would silently truncate it.
  */
 export function isTreeProgram(hex: string): boolean {
+    if (!/^([0-9a-fA-F]{2})*$/.test(hex))
+        throw new Error('isTreeProgram: input is not an even-length hex string')
     const bytes = Buffer.from(hex, 'hex')
     for (let i = 0; i < bytes.length; i++) {
         const opcode = bytes[i]

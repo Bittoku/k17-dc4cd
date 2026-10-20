@@ -283,6 +283,16 @@ describe('forth compiler', () => {
             expect(isTreeProgram(compileToHex('1 2 + out'))).to.equal(false)
         })
 
+        it('throws on odd-length, non-hex and 0x-prefixed input', () => {
+            expect(() => isTreeProgram('240')).to.throw('hex')
+            expect(() => isTreeProgram('zz')).to.throw('hex')
+            expect(() => isTreeProgram('0x2400')).to.throw('hex')
+        })
+
+        it('is false for the empty string', () => {
+            expect(isTreeProgram('')).to.equal(false)
+        })
+
         it('ignores tree opcode values inside a LIT operand', () => {
             // LIT 0x24 puts the byte 0x24 into the operand
             const hex = assemble(['LIT', 0x24, 'OUT', 'HALT'])

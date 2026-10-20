@@ -7,7 +7,14 @@
  * that nothing is signed or broadcast. No test uses the network.
  */
 import { expect } from 'chai'
-import { chmodSync, copyFileSync, mkdtempSync, writeFileSync } from 'fs'
+import {
+    chmodSync,
+    copyFileSync,
+    mkdtempSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { TestWallet, bsv } from 'scrypt-ts'
@@ -23,6 +30,7 @@ import {
 import { GatewayConfig, loadConfig, saveAttesterKey } from '../src/chain/config'
 import { decodeInstance } from '../src/chain/decode'
 import { parseOutpoint } from '../src/chain/history'
+import { inscriptionScript, parseInscription } from '../src/chain/inscription'
 import { Keeper } from '../src/chain/keeper'
 import { loadRoster } from '../src/chain/loadRoster'
 import { GenesisRoster, RosterMirror } from '../src/chain/roster'
@@ -126,12 +134,12 @@ describe('sponsor admit and remove', function () {
      * Deploy a tree machine on a fresh chain and give its config the
      * sponsor key. Output: the chain, the sponsor config path and the config.
      */
-    async function deployTree(): Promise<{
+    async function deployTree(existing?: HookChain): Promise<{
         chain: HookChain
         config: string
         cfg: GatewayConfig
     }> {
-        const chain = new HookChain()
+        const chain = existing ?? new HookChain()
         const config = file(
             `[network]\nname = "testnet"\n[wallet]\nwif = "${WALLET_KEY.toWIF()}"\n`
         )
@@ -581,6 +589,11 @@ describe('sponsor admit and remove', function () {
         expect(result.code).to.equal(1)
         expect(result.text).to.match(/ERR admit: /)
         expect((await tipOf(chain, cfg)).rosterSeq).to.equal(2n)
+        // only the two rival cycles reached the chain; none of ours did
+        const machineSpends = [...chain.txs.values()].filter(
+            (tx) => tx.inputs[0] && chain.spendsMachine(tx.inputs[0])
+        )
+        expect(machineSpends.length).to.equal(2)
     })
 
     it('a payment landing first changes the proof: the removal is signed again and goes through', async () => {
@@ -668,5 +681,173 @@ describe('sponsor admit and remove', function () {
             message = (e as Error).message
         }
         expect(message).to.contain('no inscription')
+    })
+
+    it('loadRoster refuses an inscription of another machine and one with another root', async () => {
+        const first = await deployTree()
+        const second = await deployTree(first.chain)
+        let message = ''
+        try {
+            await loadRoster(
+                {
+                    ...first.cfg,
+                    genesisInscription: second.cfg.genesisInscription,
+                },
+                { provider: first.chain }
+            )
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.contain('another machine')
+        // same instance id, a root the machine was not deployed with
+        const { txid, vout } = parseOutpoint(
+            first.cfg.genesisInscription as string
+        )
+        const genesis = JSON.parse(
+            parseInscription(
+                first.chain.txs.get(txid)!.outputs[vout].script
+            )!.body.toString('utf8')
+        ) as GenesisRoster
+        genesis.rosterRoot = rootOf([])
+        const forged = new bsv.Transaction().addOutput(
+            new bsv.Transaction.Output({
+                satoshis: 1,
+                script: inscriptionScript(
+                    WALLET_KEY.toAddress(),
+                    'application/json',
+                    Buffer.from(JSON.stringify(genesis))
+                ),
+            })
+        )
+        first.chain.add(forged)
+        message = ''
+        try {
+            await loadRoster(
+                { ...first.cfg, genesisInscription: `${forged.id}:0` },
+                { provider: first.chain }
+            )
+        } catch (e) {
+            message = (e as Error).message
+        }
+        expect(message).to.contain('root differs')
+    })
+
+    it('needs the mainnet switch and a plausible decimal key', async () => {
+        const { chain, config } = await deployTree()
+        const mainnet = join(dir, `main-${counter++}.toml`)
+        copyFileSync(config, mainnet)
+        chmodSync(mainnet, 0o600)
+        writeFileSync(
+            mainnet,
+            readFileSync(mainnet, 'utf8').replace('"testnet"', '"mainnet"')
+        )
+        const args = (extra: string[]) => [
+            mainnet,
+            '--member-key',
+            hexKeyFile(bob.pub),
+            '--payout',
+            bsv.PrivateKey.fromRandom('livenet').toAddress().toString(),
+            ...extra,
+        ]
+        const refused = await run(admitCommand, args([]), chain)
+        expect(refused.code).to.equal(2)
+        expect(refused.text).to.contain('--i-know-this-spends-real-money')
+        // with the switch the command goes on (and fails later: no such machine on mainnet is tested here)
+        const short = await run(
+            admitCommand,
+            [
+                config,
+                '--member-key',
+                file('12345'),
+                '--payout',
+                PAYOUT_ADDRESS.toString(),
+            ],
+            chain
+        )
+        expect(short.code).to.equal(2)
+        expect(short.text).to.contain('at least 2048 bits')
+        expect(chain.cycleBroadcasts).to.equal(0)
+    })
+
+    it('saves tip_outpoint and the next run starts from it', async () => {
+        const { chain, config, cfg } = await deployTree()
+        const payout = PAYOUT_ADDRESS.toString()
+        for (const [pub, index] of [
+            [bob.pub, '0'],
+            [carol.pub, '9'],
+        ] as [bigint, string][]) {
+            const done = await run(
+                admitCommand,
+                [
+                    config,
+                    '--member-key',
+                    hexKeyFile(pub),
+                    '--payout',
+                    payout,
+                    '--index',
+                    index,
+                ],
+                chain
+            )
+            expect(done.code, done.text).to.equal(0)
+        }
+        const saved = loadConfig(config)
+        expect(saved.tipOutpoint).to.equal(await tipOutpoint(chain, cfg))
+        expect(saved.machineOutpoint).to.equal(cfg.machineOutpoint)
+        expect(statSync(config).mode & 0o777).to.equal(0o600)
+        let hops = 0
+        const deps = parts(chain)
+        deps.keeper = {
+            ...deps.keeper,
+            spentBy: async (op) => {
+                hops++
+                return chain.spentBy(op)
+            },
+        }
+        const { lines, io } = sink()
+        const code = await removeCommand(
+            [config, '--member-key', hexKeyFile(bob.pub)],
+            io,
+            deps
+        )
+        expect(code, lines.join('\n')).to.equal(0)
+        // from the saved tip: one look at the unspent tip; from the
+        // deployment it would be one more per earlier cycle (2)
+        expect(hops).to.equal(1)
+        expect(loadConfig(config).tipOutpoint).to.equal(
+            await tipOutpoint(chain, cfg)
+        )
+    })
+
+    it('a removal by leaf index is refused when the leaf holds another member on the retry', async () => {
+        const { chain, config } = await deployTree()
+        const payout = PAYOUT_ADDRESS.toString()
+        const admit = (pub: bigint) =>
+            run(
+                admitCommand,
+                [
+                    config,
+                    '--member-key',
+                    hexKeyFile(pub),
+                    '--payout',
+                    payout,
+                    '--index',
+                    '9',
+                ],
+                chain
+            )
+        expect((await admit(carol.pub)).code).to.equal(0)
+        chain.before = async () => {
+            const gone = await run(
+                removeCommand,
+                [config, '--member-key', hexKeyFile(carol.pub)],
+                chain
+            )
+            expect(gone.code, gone.text).to.equal(0)
+            expect((await admit(bob.pub)).code).to.equal(0)
+        }
+        const result = await run(removeCommand, [config, '--index', '9'], chain)
+        expect(result.code).to.equal(1)
+        expect(result.text).to.contain('another member')
     })
 })

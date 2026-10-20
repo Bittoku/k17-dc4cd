@@ -14,7 +14,7 @@
  */
 
 import { K17Machine } from 'k17-vm'
-import { GatewayConfig } from './config'
+import { GatewayConfig, startOutpoint } from './config'
 import { decodeInstance } from './decode'
 import { TxSource, parseOutpoint, walkHistory } from './history'
 import { GenesisRoster, RosterMirror, replayRoster } from './roster'
@@ -26,7 +26,7 @@ export interface LoadRosterDeps {
     provider: TxSource
     /**
      * Outpoint (`txid` or `txid:vout`) of the machine at the tip of its
-     * history. Default: `[machine] outpoint` of the config.
+     * history. Default: `tip_outpoint`, else `outpoint`, of the config.
      */
     outpoint?: string
 }
@@ -68,7 +68,7 @@ export async function loadRoster(
     cfg: GatewayConfig,
     deps: LoadRosterDeps
 ): Promise<{ mirror: RosterMirror; machine: K17Machine }> {
-    const tip = deps.outpoint ?? cfg.machineOutpoint
+    const tip = deps.outpoint ?? startOutpoint(cfg)
     if (!tip) throw new Error('config: [machine] outpoint is required')
     if (!cfg.genesisOutpoint)
         throw new Error(

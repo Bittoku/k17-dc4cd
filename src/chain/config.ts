@@ -65,6 +65,12 @@ export interface GatewayConfig {
     serial?: string
     /** The machine to serve, as `txid:vout`. */
     machineOutpoint?: string
+    /**
+     * Last known outpoint of the machine (`[machine] tip_outpoint`), written
+     * by `admit` and `remove` after a relay. Forward-following starts here
+     * (see `startOutpoint`); `outpoint` keeps its meaning.
+     */
+    tipOutpoint?: string
     /** Instance id of that machine, 64 hex characters (`[machine] instance_id`). */
     instanceId?: string
     /** Outpoint (`txid:vout`) of the genesis roster inscription (`[machine] genesis_inscription`). */
@@ -223,6 +229,7 @@ export function loadConfig(path: string): GatewayConfig {
         payoutAddress: optionalString('attester', attester, 'payout_address'),
         serial: optionalString('bridge', table(doc, 'bridge'), 'serial'),
         machineOutpoint: optionalString('machine', machine, 'outpoint'),
+        tipOutpoint: optionalString('machine', machine, 'tip_outpoint'),
         instanceId: optionalString('machine', machine, 'instance_id'),
         genesisOutpoint: optionalString('machine', machine, 'genesis_outpoint'),
         genesisInscription: optionalString(
@@ -376,6 +383,27 @@ export function saveMachine(
     ]
     if (genesisOutpoint) entries.push(['genesis_outpoint', genesisOutpoint])
     writeTableEntries(path, 'machine', entries)
+}
+
+/**
+ * The outpoint where a forward-follow of the machine starts.
+ * Input: the configuration. Output: `[machine] tip_outpoint` when set, else
+ * `[machine] outpoint`, else undefined. Keeper, gateway and the sponsor
+ * commands all start here, so a long history is not walked from the
+ * deployment on every run.
+ */
+export function startOutpoint(cfg: GatewayConfig): string | undefined {
+    return cfg.tipOutpoint ?? cfg.machineOutpoint
+}
+
+/**
+ * Write the last known machine outpoint into a config file as
+ * `[machine] tip_outpoint`.
+ * Input: the file path and the outpoint (`txid:vout`). Output: none.
+ * Atomic, keeps the file mode (see `writeTableEntries`).
+ */
+export function saveTipOutpoint(path: string, outpoint: string): void {
+    writeTableEntries(path, 'machine', [['tip_outpoint', outpoint]])
 }
 
 /**

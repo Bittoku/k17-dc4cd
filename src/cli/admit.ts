@@ -48,6 +48,7 @@ import {
     describeConfig,
     hideSecrets,
     loadConfig,
+    saveTipOutpoint,
 } from '../chain/config'
 import { decodeInstance } from '../chain/decode'
 import { parseOutpoint } from '../chain/history'
@@ -78,6 +79,13 @@ const MAINNET_SWITCH = 'i-know-this-spends-real-money'
 
 /** Number of leaves of the roster tree (depth 16). */
 const LEAF_COUNT = 65536
+
+/**
+ * Least size in bits of a decimal member key. `gateway init` makes keys of
+ * KEY_BYTES * 8 bits; a modulus below 2048 bits is not a Rabin key of this
+ * system (a typo or a leaf index).
+ */
+const MIN_MODULUS_BITS = 2048
 
 /** Tries of one command: the first, and one after a reload of the mirror. */
 const MAX_ATTEMPTS = 2
@@ -119,6 +127,8 @@ interface Operation {
     index: number
     /** Words for the success line, for example "admitted". */
     done: string
+    /** Key hash of the member the cycle changes (64 hex). */
+    memberKeyHash: string
 }
 
 /**
@@ -132,11 +142,15 @@ export function readMemberKey(path: string): RabinPubKey {
     const text = readFileSync(path, 'utf8').trim()
     if (new RegExp(`^[0-9a-fA-F]{${KEY_BYTES * 2}}$`).test(text))
         return pubKeyFromBytes(text.toLowerCase())
-    if (/^[0-9]+$/.test(text) && BigInt(text) > 0n) return BigInt(text)
+    if (
+        /^[0-9]+$/.test(text) &&
+        BigInt(text).toString(2).length >= MIN_MODULUS_BITS
+    )
+        return BigInt(text)
     throw new UsageError(
         `${path}: the member key must be ${
             KEY_BYTES * 2
-        } hex characters or a decimal number`
+        } hex characters or a decimal number of at least ${MIN_MODULUS_BITS} bits`
     )
 }
 
@@ -199,6 +213,7 @@ function admission(
     return {
         index,
         done: 'admitted',
+        memberKeyHash: keyHash(member),
         input: {
             witness: [1n],
             sig: signAdmission(
@@ -231,7 +246,8 @@ function removal(
     instanceId: string,
     sponsor: { priv: { p: bigint; q: bigint }; pub: RabinPubKey },
     member: RabinPubKey | undefined,
-    requested: number | undefined
+    requested: number | undefined,
+    expectedKeyHash?: string
 ): Operation {
     const index =
         member !== undefined ? mirror.indexOf(keyHash(member)) : requested
@@ -244,9 +260,19 @@ function removal(
         throw new Refusal(
             `leaf ${index} holds no member; nothing signed or sent`
         )
+    // A removal by leaf index names a leaf, not a member: if the leaf holds
+    // another key than on the first attempt, the sponsor meant someone else.
+    if (
+        expectedKeyHash !== undefined &&
+        tree.leafPre.slice(0, 64) !== expectedKeyHash
+    )
+        throw new Refusal(
+            `leaf ${index} now holds another member than at the start; nothing sent`
+        )
     return {
         index,
         done: 'removed',
+        memberKeyHash: tree.leafPre.slice(0, 64),
         input: {
             witness: [2n],
             sig: signRemoval(
@@ -309,7 +335,8 @@ async function sponsorCommand(
     const say = (line: string) => io.out(hide(line))
     const fail = (line: string) => io.err(hide(`${kind}: ${line}`))
     try {
-        const cfg = loadConfig(parsed.positional[0])
+        const configPath = parsed.positional[0]
+        const cfg = loadConfig(configPath)
         hide = (text) => hideSecrets(text, cfg)
         if (cfg.network === 'mainnet' && !parsed.switches.has(MAINNET_SWITCH))
             throw new UsageError(
@@ -338,6 +365,8 @@ async function sponsorCommand(
         say(`${kind}: ${describeConfig(cfg)}`)
 
         let lastReason = ''
+        /** Key hash of the leaf removed by index, kept from the first attempt. */
+        let targetKeyHash: string | undefined
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             // Follow the machine to its newest cycle, then rebuild the mirror.
             const tip = await keeper.sync()
@@ -367,11 +396,14 @@ async function sponsorCommand(
                           machine.instanceId,
                           sponsor,
                           member,
-                          requested
+                          requested,
+                          targetKeyHash
                       )
+            if (kind === 'remove') targetKeyHash = operation.memberKeyHash
 
             // Dry run: the same plan the tick makes, with no broadcast.
-            const { time, mtp } = await keeper.chainTime(now())
+            const attemptTime = now()
+            const { time, mtp } = await keeper.chainTime(attemptTime)
             const machineTx = keeper.machineTx
             const { vout } = parseOutpoint(tip)
             const output = machineTx?.outputs[vout]
@@ -408,7 +440,9 @@ async function sponsorCommand(
             }
             if (plan.halted)
                 throw new Refusal(
-                    'the machine has ended (the program halts at its end time); nothing sent'
+                    plan.deadManHalt
+                        ? 'the dead-man interval has passed: the next cycle would halt and refund the machine; nothing sent'
+                        : 'the machine has ended (the program halts at its end time); nothing sent'
                 )
             const expectedRoot = SparseMerkleTree.rootAfter(
                 plan.leafAfter ?? '',
@@ -416,7 +450,7 @@ async function sponsorCommand(
                 BigInt(operation.index)
             )
 
-            const result = await keeper.tick(now(), operation.input, mtp)
+            const result = await keeper.tick(attemptTime, operation.input, mtp)
             if (!result.txid) {
                 if (result.skipped === WAITING_FOR_MTP)
                     throw new Refusal(MTP_HINT)
@@ -445,6 +479,7 @@ async function sponsorCommand(
                 throw new Refusal(
                     `cycle ${result.txid} ran, but the machine does not hold the predicted roster root and sequence number`
                 )
+            if (result.outpoint) saveTipOutpoint(configPath, result.outpoint)
             say(
                 `${operation.done} leaf ${operation.index} txid ${result.txid} lockTime ${result.lockTime} (mtp ${result.mtp}) rosterSeq ${after.rosterSeq} rosterRoot ${after.rosterRoot} -> ${result.outpoint}`
             )

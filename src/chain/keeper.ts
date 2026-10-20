@@ -41,7 +41,7 @@ import {
     planCycle,
     stateOf,
 } from 'k17-vm'
-import { GatewayConfig, hideSecrets } from './config'
+import { GatewayConfig, hideSecrets, startOutpoint } from './config'
 import { ChainInfo, FetchLike, chainInfo, wocFetch } from './provider'
 import { Outpoint, parseOutpoint } from './history'
 import { decodeMachine } from './decode'
@@ -238,7 +238,7 @@ function messageOf(e: unknown): string {
 
 /** Advances one machine; keeps the latest outpoint it made. */
 export class Keeper {
-    /** The outpoint in the configuration. */
+    /** The outpoint in the configuration (`tip_outpoint`, else `outpoint`). */
     private readonly start: Outpoint
     private current?: Current
     private halted = false
@@ -260,9 +260,9 @@ export class Keeper {
         private readonly signer: Signer,
         options: KeeperOptions = {}
     ) {
-        if (!cfg.machineOutpoint)
-            throw new Error('config: [machine] outpoint is required')
-        this.start = parseOutpoint(cfg.machineOutpoint)
+        const start = startOutpoint(cfg)
+        if (!start) throw new Error('config: [machine] outpoint is required')
+        this.start = parseOutpoint(start)
         this.cfg = cfg
         this.readChain =
             options.chainInfo ?? (() => chainInfo(cfg.network, options.fetch))

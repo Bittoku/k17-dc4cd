@@ -51,7 +51,7 @@ held write-up belong here.
   from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`. Pre-v3.1 machines do not
   decode under the v3.1 artifact (`fromLockingScript` gives TEMPLATE_MISMATCH); the `deadMan` field
   changed the script.
-- `admit` and `remove` (tree-mode sponsor) load the roster with `loadRoster` (`src/chain/loadRoster.ts`: genesis inscription + `walkHistory`, checked against the tip's root and seq) and pass the proof through `PendingInput.tree` to `Keeper.tick`. They reload and re-sign once when another cycle lands first.
+- `admit` and `remove` (tree-mode sponsor) load the roster with `loadRoster` (`src/chain/loadRoster.ts`: genesis inscription + `walkHistory`, checked against the tip's root and seq) and pass the proof through `PendingInput.tree` to `Keeper.tick`. They reload and re-sign once when another cycle lands first, and save `[machine] tip_outpoint` after a relay. `startOutpoint(cfg)` (`tip_outpoint ?? outpoint`) is where every forward-follow starts; `Keeper` uses it, so `keeper` and `gateway` follow from the saved tip too (they do not write it yet).
 - The `keeper` command never supplies a roster-tree proof to `planCycle`, so it cannot relay MEMBER,
   ADMIT or REMOVE cycles yet; on such a machine it reports `plan: ...` and broadcasts nothing (fails safe).
   Tree-mode relaying is a later plan.

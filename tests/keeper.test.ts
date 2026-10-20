@@ -36,6 +36,7 @@ import {
     GatewayConfig,
     hideSecrets,
     loadConfig,
+    saveMachine,
     withMachine,
 } from '../src/chain/config'
 import { Outpoint } from '../src/chain/history'
@@ -316,6 +317,55 @@ describe('keeper', function () {
         expect(solved.error).to.equal(undefined)
         expect(solved.halted).to.equal(true)
         expect((await keeper.tick(T0 + 240)).skipped).to.equal('machine halted')
+    })
+
+    it('refuses a tip_outpoint of another machine, with no broadcast', async () => {
+        const { chain, signer } = setup()
+        const mine = await deployed(chain, signer, heartbeatProgram())
+        const other = await deployed(chain, signer, heartbeatProgram())
+        const id = machineOf(
+            chain.txs.get(mine.machineOutpoint!.split(':')[0])!
+        ).instanceId
+        const cfg: GatewayConfig = {
+            ...mine,
+            instanceId: id,
+            tipOutpoint: other.machineOutpoint,
+        }
+        const result = await keeperOn(cfg, chain, signer).tick(T0 + 100)
+        expect(result.txid).to.equal(undefined)
+        expect(result.error).to.contain(
+            'tip_outpoint does not belong to the configured machine'
+        )
+        expect(chain.cycleBroadcasts).to.equal(0)
+        // the same tip with the right instance id is followed
+        const fine = await keeperOn(
+            {
+                ...cfg,
+                instanceId: machineOf(
+                    chain.txs.get(other.machineOutpoint!.split(':')[0])!
+                ).instanceId,
+            },
+            chain,
+            signer
+        ).tick(T0 + 100)
+        expect(fine.error).to.equal(undefined)
+    })
+
+    it('a new machine in the config clears tip_outpoint', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'k17tip-'))
+        const path = join(dir, 'gw.toml')
+        writeFileSync(
+            path,
+            '[network]\nname = "testnet"\n[wallet]\nwif = "x"\n[machine]\noutpoint = "aa:0"\ninstance_id = "bb"\ntip_outpoint = "cc:0"\n'
+        )
+        chmodSync(path, 0o600)
+        saveMachine(path, 'dd:0', 'ee')
+        const text = readFileSync(path, 'utf8')
+        expect(text).to.not.contain('tip_outpoint')
+        expect(text).to.contain('outpoint = "dd:0"')
+        expect(
+            withMachine('[machine]\ntip_outpoint = "cc:0"\n', 'dd:0', 'ee')
+        ).to.not.contain('tip_outpoint')
     })
 
     it('keeper resyncs after a conflicting spend', async () => {

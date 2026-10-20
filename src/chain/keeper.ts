@@ -434,6 +434,18 @@ export class Keeper {
             return { result: { mtp, ...HALTED } }
         }
         const m = K17Machine.fromTx(current.tx, current.vout) as K17Machine
+        // A saved tip of another machine (for example after a redeploy)
+        // must never be acted on.
+        if (
+            this.cfg.instanceId &&
+            m.instanceId.toLowerCase() !== this.cfg.instanceId.toLowerCase()
+        )
+            return {
+                result: {
+                    mtp,
+                    error: 'tip_outpoint does not belong to the configured machine (instance id differs from [machine] instance_id)',
+                },
+            }
         const lockTime = Math.min(now, mtp - 1)
         if (BigInt(lockTime) < m.lastTime)
             return {

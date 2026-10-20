@@ -276,12 +276,14 @@ const TABLE_HEADER = /^\s*\[/
  * Input: the file text, the table name (for example "machine") and the
  * entries as [key, string value] pairs. Output: the new text. Other lines,
  * comments included, do not change; old lines of the table with the same
- * keys are replaced; the table is added at the end when it is not there.
+ * keys, and lines of the keys in `removeKeys`, are dropped (the new entries
+ * take their place); the table is added at the end when it is not there.
  */
 export function withTableEntries(
     text: string,
     tableName: string,
-    entries: [string, string][]
+    entries: [string, string][],
+    removeKeys: string[] = []
 ): string {
     const lines = text.split('\n')
     const entryLines = entries.map(([k, v]) => `${k} = ${JSON.stringify(v)}`)
@@ -294,7 +296,7 @@ export function withTableEntries(
     }
     let end = lines.findIndex((l, i) => i > header && TABLE_HEADER.test(l))
     if (end < 0) end = lines.length
-    const keys = new Set(entries.map(([k]) => k))
+    const keys = new Set([...entries.map(([k]) => k), ...removeKeys])
     const kept = lines.slice(header + 1, end).filter((l) => {
         const key = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(l)?.[1]
         return !key || !keys.has(key)
@@ -308,6 +310,12 @@ export function withTableEntries(
 }
 
 /**
+ * `[machine]` keys that belong to one machine's run (not to the config):
+ * a new machine removes the old value.
+ */
+const PER_MACHINE_KEYS = ['tip_outpoint']
+
+/**
  * Set `[machine] outpoint` and `instance_id` in the text of a config file.
  * Input: the file text, the outpoint (`txid:vout`) and the instance id.
  * Output: the new text, as `withTableEntries` makes it.
@@ -317,10 +325,15 @@ export function withMachine(
     outpoint: string,
     instanceId: string
 ): string {
-    return withTableEntries(text, 'machine', [
-        ['outpoint', outpoint],
-        ['instance_id', instanceId],
-    ])
+    return withTableEntries(
+        text,
+        'machine',
+        [
+            ['outpoint', outpoint],
+            ['instance_id', instanceId],
+        ],
+        PER_MACHINE_KEYS
+    )
 }
 
 /**
@@ -336,12 +349,14 @@ export function writeTableEntries(
     path: string,
     tableName: string,
     entries: [string, string][],
-    mode: number = statSync(path).mode & 0o777
+    mode: number = statSync(path).mode & 0o777,
+    removeKeys: string[] = []
 ): void {
     const text = withTableEntries(
         readFileSync(path, 'utf8'),
         tableName,
-        entries
+        entries,
+        removeKeys
     )
     try {
         TOML.parse(text)
@@ -382,7 +397,13 @@ export function saveMachine(
         ['instance_id', instanceId],
     ]
     if (genesisOutpoint) entries.push(['genesis_outpoint', genesisOutpoint])
-    writeTableEntries(path, 'machine', entries)
+    writeTableEntries(
+        path,
+        'machine',
+        entries,
+        statSync(path).mode & 0o777,
+        PER_MACHINE_KEYS
+    )
 }
 
 /**

@@ -5,12 +5,23 @@
  */
 
 import { expect } from 'chai'
-import { fibonacciProgram, initialState, outputLog, run } from 'k17-vm'
+import {
+    assemble,
+    encodeLeafPre,
+    envOf,
+    fibonacciProgram,
+    initialState,
+    outputLog,
+    run,
+    SparseMerkleTree,
+    stepK,
+} from 'k17-vm'
 import {
     compile,
     compileToHex,
     cycleInstructionCounts,
     ForthCompileError,
+    isTreeProgram,
 } from '../src/forth'
 import { relaySource } from '../src/programs/relay'
 
@@ -210,6 +221,73 @@ describe('forth compiler', () => {
             )
             expect(counts[0]).to.equal(4)
             counts.forEach((count) => expect(count).to.be.at.most(40))
+        })
+    })
+
+    describe('tree instruction words', () => {
+        const TREE_WORDS: [string, string][] = [
+            ['member', '24'],
+            ['lastround', '25'],
+            ['attestm', '26'],
+            ['payleaf', '27'],
+            ['admit', '28'],
+            ['remove', '29'],
+            ['outh', '2a'],
+        ]
+
+        it('compiles each word to its opcode byte', () => {
+            for (const [word, byte] of TREE_WORDS)
+                expect(compileToHex(word)).to.equal(byte + '00')
+        })
+
+        it('rejects redefining any of the words', () => {
+            for (const [word] of TREE_WORDS)
+                expect(compileError(`: ${word} 1 ;`).message).to.contain(
+                    'invalid name'
+                )
+        })
+
+        it('counts each word as one instruction', () => {
+            for (const [word] of TREE_WORDS)
+                expect(
+                    cycleInstructionCounts(compile(word).tokens)
+                ).to.deep.equal([2])
+        })
+
+        it('runs member drop lastround out halt on the reference VM', () => {
+            const tree = new SparseMerkleTree()
+            tree.set(5, encodeLeafPre('11'.repeat(32), '33'.repeat(20), 7n, 1n))
+            const state = initialState(
+                compileToHex('member drop lastround out halt'),
+                undefined,
+                { rosterRoot: tree.root() }
+            )
+            const result = stepK(
+                state,
+                { ...envOf(0n), tree: tree.proof(5) },
+                40
+            )
+            expect(result.status).to.equal('halted')
+            expect(outputLog(result.state)).to.deep.equal([7n])
+        })
+    })
+
+    describe('isTreeProgram', () => {
+        it('is true for a tree program', () => {
+            expect(isTreeProgram(compileToHex('member drop halt'))).to.equal(
+                true
+            )
+        })
+
+        it('is false for a non-tree program', () => {
+            expect(isTreeProgram(compileToHex('1 2 + out'))).to.equal(false)
+        })
+
+        it('ignores tree opcode values inside a LIT operand', () => {
+            // LIT 0x24 puts the byte 0x24 into the operand
+            const hex = assemble(['LIT', 0x24, 'OUT', 'HALT'])
+            expect(hex).to.contain('24')
+            expect(isTreeProgram(hex)).to.equal(false)
         })
     })
 })

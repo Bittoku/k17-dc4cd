@@ -18,6 +18,7 @@ import {
     assemble,
     HAS_OPERAND,
     MNEMONIC,
+    Op,
     MEM_CELLS,
     OUT_MAX,
     ROSTER_BASE,
@@ -94,6 +95,14 @@ const PRIMITIVES: ReadonlySet<string> = new Set([
     'endorse',
     'payslot',
     'value',
+    // Merkle-roster (tree) instructions, K17+ v3
+    'member',
+    'lastround',
+    'attestm',
+    'payleaf',
+    'admit',
+    'remove',
+    'outh',
 ])
 
 /** Built-in constants that compile to `LIT n`. They may not be redefined. */
@@ -447,4 +456,27 @@ export function cycleInstructionCounts(tokens: (string | number)[]): number[] {
     }
     counts.push(current)
     return counts
+}
+
+/** First and last opcode byte of the tree (Merkle-roster) instructions. */
+const TREE_OPCODE_FIRST = Op.MEMBER
+const TREE_OPCODE_LAST = Op.OUTH
+
+/**
+ * Tell whether a program uses the tree-roster instructions (MEMBER, LASTROUND,
+ * ATTESTM, PAYLEAF, ADMIT, REMOVE, OUTH; opcodes 0x24..0x2a). The bytecode is
+ * decoded linearly and the 4-byte operand of each operand-carrying opcode
+ * (k17-vm `HAS_OPERAND`) is skipped, so operand bytes never count as opcodes.
+ * Input: program hex string (optional 0x prefix not accepted). Output: true
+ * when any decoded opcode is a tree instruction, otherwise false.
+ */
+export function isTreeProgram(hex: string): boolean {
+    const bytes = Buffer.from(hex, 'hex')
+    for (let i = 0; i < bytes.length; i++) {
+        const opcode = bytes[i]
+        if (opcode >= TREE_OPCODE_FIRST && opcode <= TREE_OPCODE_LAST)
+            return true
+        if (HAS_OPERAND.has(opcode)) i += 4
+    }
+    return false
 }

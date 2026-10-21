@@ -171,7 +171,8 @@ export interface RehearsalState {
     deployed?: boolean
     inscribed?: boolean
     genesisChecked?: boolean
-    admitted?: { leaf: number; txid: string }
+    /** C's leaf, admission txid and the round its admission cycle fell in (first payable round is one later). */
+    admitted?: { leaf: number; txid: string; round?: number }
     delivered: Record<string, string>
     removed?: { leaf: number; txid: string }
     refusals: { stage: string; gateway: GatewayName; message: string }[]
@@ -916,7 +917,11 @@ class Rehearsal {
         const leaf = Number(/admitted leaf (\d+)/.exec(done)?.[1])
         const record = await this.describeCycle('admit C', done)
         const chainTime = await this.chainTime().catch(() => undefined)
-        this.state.admitted = { leaf, txid: record?.txid ?? '' }
+        this.state.admitted = {
+            leaf,
+            txid: record?.txid ?? '',
+            round: record?.lockTime === undefined ? undefined : roundAt(this.opts, record.lockTime),
+        }
         this.save()
         await this.syncTip()
         this.log(
@@ -1163,9 +1168,12 @@ class Rehearsal {
         }))
         const leafOf = { A: 0, B: 1, C: this.state.admitted?.leaf ?? 2 }
         const expected = new Set<string>()
+        // A member admitted during round r has lastRound r, so C is first payable in r + 1;
+        // without a recorded admission round, assume it was admitted before round 1.
+        const cFirstRound = (this.state.admitted?.round ?? 0) + 1
         for (let r = 1; r <= ROUNDS; r++)
             for (const name of r < 3 ? GATEWAYS : (['A', 'C'] as const))
-                expected.add(`${r}:${leafOf[name]}`)
+                if (name !== 'C' || r >= cFirstRound) expected.add(`${r}:${leafOf[name]}`)
         const got = new Set(readings.map((r) => `${r.round}:${r.member}`))
         for (const e of expected) if (!got.has(e)) problems.push(`paid reading missing: round:leaf ${e}`)
         for (const g of got) if (!expected.has(g)) problems.push(`unexpected paid reading: round:leaf ${g}`)

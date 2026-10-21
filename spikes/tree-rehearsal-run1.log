@@ -1,0 +1,539 @@
+2026-10-21T12:36:53.000Z === tree rehearsal start (resume: false) ===
+2026-10-21T12:36:54.000Z funding address mna7mVra5dB7xiJiR4GYTzu1dGkXGjz3Md balance 9936439 sats
+2026-10-21T12:36:55.000Z program: start 1792582530 (mtp 1792580730 + 1800) period 3600 rounds 3 bounty 150 range 0..100000; END 1792593330
+2026-10-21T12:36:55.000Z deposit 10500 sats = ceil(1.2 * (15 cycles * 500 + 8 readings * 150)), cap 50000
+2026-10-21T12:36:56.000Z [init sponsor] gateway: making a Rabin key (this takes some seconds)
+2026-10-21T12:36:56.000Z [init sponsor] gateway: key saved in /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/sponsor.toml (mode 600)
+2026-10-21T12:36:56.000Z [init sponsor] give these to the sponsor:
+2026-10-21T12:36:56.000Z [init sponsor]   public key hash: aece86f0d1306b48ea1efb93c89f50098c5980a380db97ebfdb3cf4e350fe1be
+2026-10-21T12:36:56.000Z [init sponsor]   public key: 3dd533cb507c559958f7a74275e74292172f6281163a9486615410539f9baaab41be275469472c990c88493d0e42a9f0ad9b83421ffe95cfb8bb356578aea315e08cf6f38a31e48906ed525f3594b19e23f30a31537f25858632cc9dda39fbb718dfd4848111e566d3af4b686c59e860b261ffbe89ea9d66447c165f9b64145f91da6badbb06cc58149c112bd4504c7f54f3dd8b45b01555626744329575b7ee7a3a7e48526d254fb905dd88eba2b4caea35e42cf4dfa8913b917045ccf8f6889bddcefba62d705b4622d096355bd6b417a0cedd612a87df179bbd04e5104077bbddc88426ef785d19eb0ac02d267186e2d3595f30e3e2b4d187f57719baa9cd9aee27bc4a26506f913ab5f91b6c2ed432dee59f2b6a2bd47f6d1270ce1d2bbecf7728f3a3ef49d94d4e7206640793180b1140e73695a32dfe9b572d4e76853fa0bc4458167286715eff44fc77cd9fed5a3c9310da13977ba7d2ba5160bb5d60c759def15828e36d2b5d0a76106f1084fb705b3a911a8d0d64cc3a42283aa76f
+2026-10-21T12:36:56.000Z [init sponsor]   payout address: mna7mVra5dB7xiJiR4GYTzu1dGkXGjz3Md (the wallet address)
+2026-10-21T12:36:56.000Z [init sponsor]   payout hash: 4d6209433a8c33a20492502a27cb7b9358badcf2
+2026-10-21T12:36:56.000Z [init sponsor] exit 0
+2026-10-21T12:36:57.000Z [init A] gateway: making a Rabin key (this takes some seconds)
+2026-10-21T12:36:57.000Z [init A] gateway: key saved in /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/gateway-A.toml (mode 600)
+2026-10-21T12:36:57.000Z [init A] give these to the sponsor:
+2026-10-21T12:36:57.000Z [init A]   public key hash: 00d980da35e9413e0f383f62f24b6733b529183e493b5e92adbf51e745757117
+2026-10-21T12:36:57.000Z [init A]   public key: 85ea7ebf95e90cc1f0c95b20f236d14d1942b3ad98a80d1adfbd83a7b40c2bc75c721bcd00edd3298f96eb49ea1eef5b0188dac2bf2893bcfe7dabc4d69561bae04df13b8103bbdc84e3d2f89cd2dda11107c6e112eab649f0ec85cc80b7fd420f8314b10e025b2bc6a0e100d81a03950f21843e82316c70fe714978b1611abc872605cec532ee02b351c5ddef260bd07c1e827dbcbecd863089e39fb7f7fc7bfaa9282bbf172c1a42c0724a41146becb86adcc1caa1f04bfb3e9edb98d518bc0a86b9ebea34d4e119de292b583d446c2b844710e8d7172552768711d926330ff128e394e1ab1f0ab1bb40809bd09504f77391325f2d2acadcab689011389ad717f53686710c10b2da36eaf68b97546a04eca8d55987c4fe93f63173f058090954f47f08edeb5476769fa1f2a2022804b3433c4d14c9c23269f42376888c887d8b6af6b79401823f0c71e9bb7a4f044fedb11fe4a312f355dc7cce334091e880df3eaa57e87c60b51d9f4c89da4f18773d94893e5e1ec7ee59c841531f427344
+2026-10-21T12:36:57.000Z [init A]   payout address: mfqFQVGfA2mT6CFgWpRWAsnCKXQAtEg7SL (the wallet address)
+2026-10-21T12:36:57.000Z [init A]   payout hash: 0375c5533904cea31e0e8e0b227c17d30654b03f
+2026-10-21T12:36:57.000Z [init A]   (tree mode: the sponsor admits this key with `k17forth admit`; no slot is needed)
+2026-10-21T12:36:57.000Z [init A] exit 0
+2026-10-21T12:36:59.000Z [init B] gateway: making a Rabin key (this takes some seconds)
+2026-10-21T12:36:59.000Z [init B] gateway: key saved in /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/gateway-B.toml (mode 600)
+2026-10-21T12:36:59.000Z [init B] give these to the sponsor:
+2026-10-21T12:36:59.000Z [init B]   public key hash: 85bd4a51fb11db6deb8f7b22065c18de154436221518957187a58dde3a307419
+2026-10-21T12:36:59.000Z [init B]   public key: d12fdd23997a424d282a2b751dec07263ba55ef90e3089fbd8382ae3d4a514c02516a8bec0459ffa4bb7baeb8de3a5cc6035ff40838ab4c6c821b29603c0e1120f03d67870f864e3cf2faaddc84ffc32db1a56b5201a25461460fc919461e979dc18179931be23fec07a1ea9c954488e835e6b3d9b37009b1c53e8216aaf4cc9efa03e9c0b8dcb8e7b0a69ece6b4bc3522c5b98b5f9d4f0a5070d641a8f29deaf84f98baa2374c0ceb5ff42d15c6f8b9491f507edbd8d77229c0f3281f81ee0db7f1458cc6d205af259bf208ecd01cdd45265c5c93c898aa64d37ea9be5d694492e1ed58b205a24b051628d254515e8e689e57e740f0c9fadea112c52197dc76c825a07ac671e18925c2ef764a6e3f08483df6d0efdcf8dee3180d0755b112777b1ba741dd5db686bf7692e865d3ad5cd8e9646dcc568db31a3dff558efbbcbc55f9d72635a502881a3e4307ebc9763656af6647969aa08f7998093fd31a83dcee7507ccc0469b6f6c023ee8f07547799c9ec465e1bf9dbab30aeba7626a1016
+2026-10-21T12:36:59.000Z [init B]   payout address: myNxCAWqn82yzbP5CizECd5jVyCFeKoM4J (the wallet address)
+2026-10-21T12:36:59.000Z [init B]   payout hash: c3eeda0609ebeaee99064a8b3b7dd46897dff89f
+2026-10-21T12:36:59.000Z [init B]   (tree mode: the sponsor admits this key with `k17forth admit`; no slot is needed)
+2026-10-21T12:36:59.000Z [init B] exit 0
+2026-10-21T12:37:00.000Z [init C] gateway: making a Rabin key (this takes some seconds)
+2026-10-21T12:37:00.000Z [init C] gateway: key saved in /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/gateway-C.toml (mode 600)
+2026-10-21T12:37:00.000Z [init C] give these to the sponsor:
+2026-10-21T12:37:00.000Z [init C]   public key hash: f183695d216dea3ca5987c0a6ded7ec547f534c6a17585ada075bcb61a80d628
+2026-10-21T12:37:00.000Z [init C]   public key: a139a514db30a3e4b4a3579d4f099418484494c711b4540852d84b21746cd9d2fe8a169b9d8c7b1cd9c5c1c4fa273dc226be1eec6da95696c1e5a6f02b721420516cd4c079424da9736ab3ebe6ffb0acc06d02bf7db45f6a287ff6c88d16174abef277db5dc74d20eed8c79578e1252d92c887d8a79a27b1073b120061db815aa6431c4fe58e86066b5826b354753872f82d67416a6df900ad9147f6dce08b2a2af8a589310d8fed66fd95e709cfe2656d2872d02105e2a7fc29e40083692f4f3c139edf01cff758541a1e213f45b9d8927b2cc3f885c9063effe25637d2c90b99cf044f096219a9b96a3a2fd783d8c8bbcbf4309b6c5159ee3429c4ef4e0741edfafd4dfacac2ebfd366c4538e959c12cc7d95041fe94b9dfb9c985a0c953105374c55cb888f5c14a92958a185378c9e96c4ebaa2ef529b977eed225803f58dd855bc1849d7e27225e1f38bea1476d351053cb3c57ad7696047b3dd080e511b998fe5de7a86767b53522998a164f58979e14abfe7a48c9d17228788c3612427
+2026-10-21T12:37:00.000Z [init C]   payout address: n2pubTzudLwwsB6oz267NQhH5MAPe1tg7f (the wallet address)
+2026-10-21T12:37:00.000Z [init C]   payout hash: e9bfe006acd78c3ebc347942c48498875ac2b71c
+2026-10-21T12:37:00.000Z [init C]   (tree mode: the sponsor admits this key with `k17forth admit`; no slot is needed)
+2026-10-21T12:37:00.000Z [init C] exit 0
+2026-10-21T12:37:07.000Z funded gateways A B C with 6000 sats each: txid ace6c116dbdc2ac746e8fdc2fcb50c226a42b161664debb2c45f831ae705741d
+2026-10-21T12:37:22.000Z [deploy] outpoint 402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0
+2026-10-21T12:37:22.000Z [deploy] instance a36d5f5e48d91a10a5ccfa1a5cd3aedb5f7fbff61d28f1f836caa6e79cf44443
+2026-10-21T12:37:22.000Z [deploy] lastTime 1792581930 (median time past 1792581931)
+2026-10-21T12:37:22.000Z [deploy] wrote [machine] outpoint and instance_id to /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/sponsor.toml
+2026-10-21T12:37:22.000Z [deploy] ERR deploy: the machine is deployed (402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0), but the genesis inscription failed: WhatsonchainProvider ERROR: "unexpected response code 500: 258: txn-mempool-conflict"
+
+2026-10-21T12:37:22.000Z [deploy] ERR deploy: run again: k17forth inscribe-genesis /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/sponsor.toml --tree /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/members.json
+2026-10-21T12:37:22.000Z [deploy] exit 1
+2026-10-21T12:37:30.000Z [inscribe-genesis] genesis inscription a416e4640de97b3617a3f99cc456633a1b276867c07ee14d434dfc53011ffb80:0
+2026-10-21T12:37:30.000Z [inscribe-genesis] wrote [machine] genesis_inscription to /Users/jerrychan/work/stack_computers/k17-dc4cd-tree/spikes/tree-rehearsal/sponsor.toml
+2026-10-21T12:37:30.000Z [inscribe-genesis] exit 0
+2026-10-21T12:37:30.000Z machine 402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 instance a36d5f5e48d91a10a5ccfa1a5cd3aedb5f7fbff61d28f1f836caa6e79cf44443 genesis inscription a416e4640de97b3617a3f99cc456633a1b276867c07ee14d434dfc53011ffb80:0
+2026-10-21T12:37:33.000Z CYCLE deploy txid=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0 size=469286 fee=470 machine=10500 lockTime=n/a mtp=n/a
+2026-10-21T12:37:52.000Z [inspect genesis] output 402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0  10500 sats
+2026-10-21T12:37:52.000Z [inspect genesis] pc 0  lastTime 1792581930
+2026-10-21T12:37:52.000Z [inspect genesis] ds []
+2026-10-21T12:37:52.000Z [inspect genesis] rs []
+2026-10-21T12:37:52.000Z [inspect genesis] out []
+2026-10-21T12:37:52.000Z [inspect genesis] instance a36d5f5e48d91a10a5ccfa1a5cd3aedb5f7fbff61d28f1f836caa6e79cf44443
+2026-10-21T12:37:52.000Z [inspect genesis] beneficiary 4d6209433a8c33a20492502a27cb7b9358badcf2  reward min 100 slope 1 max 500
+2026-10-21T12:37:52.000Z [inspect genesis] dead-man: 21600 s (6 hours)
+2026-10-21T12:37:52.000Z [inspect genesis] program:
+2026-10-21T12:37:52.000Z [inspect genesis]   0: TIME
+2026-10-21T12:37:52.000Z [inspect genesis]   1: LIT 1792593330
+2026-10-21T12:37:52.000Z [inspect genesis]   6: /
+2026-10-21T12:37:52.000Z [inspect genesis]   7: IF 13
+2026-10-21T12:37:52.000Z [inspect genesis]   12: HALT
+2026-10-21T12:37:52.000Z [inspect genesis]   13: IN
+2026-10-21T12:37:52.000Z [inspect genesis]   14: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   15: IF 109
+2026-10-21T12:37:52.000Z [inspect genesis]   20: LIT 1
+2026-10-21T12:37:52.000Z [inspect genesis]   25: -
+2026-10-21T12:37:52.000Z [inspect genesis]   26: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   27: IF 66
+2026-10-21T12:37:52.000Z [inspect genesis]   32: LIT 1
+2026-10-21T12:37:52.000Z [inspect genesis]   37: -
+2026-10-21T12:37:52.000Z [inspect genesis]   38: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   39: IF 50
+2026-10-21T12:37:52.000Z [inspect genesis]   44: LIT 0
+2026-10-21T12:37:52.000Z [inspect genesis]   49: VERIFY
+2026-10-21T12:37:52.000Z [inspect genesis]   50: LIT 1275068416
+2026-10-21T12:37:52.000Z [inspect genesis]   55: REMOVE
+2026-10-21T12:37:52.000Z [inspect genesis]   56: LIT 0
+2026-10-21T12:37:52.000Z [inspect genesis]   61: IF 99
+2026-10-21T12:37:52.000Z [inspect genesis]   66: LIT 1207959552
+2026-10-21T12:37:52.000Z [inspect genesis]   71: TIME
+2026-10-21T12:37:52.000Z [inspect genesis]   72: LIT 1792582530
+2026-10-21T12:37:52.000Z [inspect genesis]   77: /
+2026-10-21T12:37:52.000Z [inspect genesis]   78: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   79: IF 98
+2026-10-21T12:37:52.000Z [inspect genesis]   84: DROP
+2026-10-21T12:37:52.000Z [inspect genesis]   85: TIME
+2026-10-21T12:37:52.000Z [inspect genesis]   86: LIT 1792578930
+2026-10-21T12:37:52.000Z [inspect genesis]   91: -
+2026-10-21T12:37:52.000Z [inspect genesis]   92: LIT 3600
+2026-10-21T12:37:52.000Z [inspect genesis]   97: /
+2026-10-21T12:37:52.000Z [inspect genesis]   98: ADMIT
+2026-10-21T12:37:52.000Z [inspect genesis]   99: LIT 0
+2026-10-21T12:37:52.000Z [inspect genesis]   104: IF 168
+2026-10-21T12:37:52.000Z [inspect genesis]   109: TIME
+2026-10-21T12:37:52.000Z [inspect genesis]   110: LIT 1792582530
+2026-10-21T12:37:52.000Z [inspect genesis]   115: /
+2026-10-21T12:37:52.000Z [inspect genesis]   116: VERIFY
+2026-10-21T12:37:52.000Z [inspect genesis]   117: LIT 150
+2026-10-21T12:37:52.000Z [inspect genesis]   122: TIME
+2026-10-21T12:37:52.000Z [inspect genesis]   123: LIT 1792578930
+2026-10-21T12:37:52.000Z [inspect genesis]   128: -
+2026-10-21T12:37:52.000Z [inspect genesis]   129: LIT 3600
+2026-10-21T12:37:52.000Z [inspect genesis]   134: /
+2026-10-21T12:37:52.000Z [inspect genesis]   135: MEMBER
+2026-10-21T12:37:52.000Z [inspect genesis]   136: DROP
+2026-10-21T12:37:52.000Z [inspect genesis]   137: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   138: LIT 1073741824
+2026-10-21T12:37:52.000Z [inspect genesis]   143: +
+2026-10-21T12:37:52.000Z [inspect genesis]   144: IN
+2026-10-21T12:37:52.000Z [inspect genesis]   145: DUP
+2026-10-21T12:37:52.000Z [inspect genesis]   146: LIT 100001
+2026-10-21T12:37:52.000Z [inspect genesis]   151: /
+2026-10-21T12:37:52.000Z [inspect genesis]   152: IF 163
+2026-10-21T12:37:52.000Z [inspect genesis]   157: LIT 0
+2026-10-21T12:37:52.000Z [inspect genesis]   162: VERIFY
+2026-10-21T12:37:52.000Z [inspect genesis]   163: SWAP
+2026-10-21T12:37:52.000Z [inspect genesis]   164: OVER
+2026-10-21T12:37:52.000Z [inspect genesis]   165: ATTESTM
+2026-10-21T12:37:52.000Z [inspect genesis]   166: OUTH
+2026-10-21T12:37:52.000Z [inspect genesis]   167: PAYLEAF
+2026-10-21T12:37:52.000Z [inspect genesis]   168: YIELD
+2026-10-21T12:37:52.000Z [inspect genesis]   169: IF 0
+2026-10-21T12:37:52.000Z [inspect genesis]   174: HALT
+2026-10-21T12:37:52.000Z [inspect genesis] tree: roster root 63e83508d185d01c3c2db93ed2f822ec274311bdc0ba80ad6cb8965afa4f3986 seq 0
+2026-10-21T12:37:52.000Z [inspect genesis] tree: sponsor aece86f0d130..
+2026-10-21T12:37:52.000Z [inspect genesis] tree: logHash 0000000000000000000000000000000000000000000000000000000000000000
+2026-10-21T12:37:52.000Z [inspect genesis] tree: 2 members
+2026-10-21T12:37:52.000Z [inspect genesis] exit 0
+2026-10-21T12:38:11.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:38:11.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:38:11.000Z [admit C] exit 1
+2026-10-21T12:39:29.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:39:29.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:39:29.000Z [admit C] exit 1
+2026-10-21T12:40:47.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:40:47.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:40:47.000Z [admit C] exit 1
+2026-10-21T12:42:08.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:42:08.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:42:08.000Z [admit C] exit 1
+2026-10-21T12:43:32.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:43:32.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:43:32.000Z [admit C] exit 1
+2026-10-21T12:44:50.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:44:50.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:44:50.000Z [admit C] exit 1
+2026-10-21T12:46:19.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:46:19.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:46:19.000Z [admit C] exit 1
+2026-10-21T12:47:38.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:47:38.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:47:38.000Z [admit C] exit 1
+2026-10-21T12:48:57.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:48:57.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:48:57.000Z [admit C] exit 1
+2026-10-21T12:50:17.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:50:17.000Z [admit C] ERR admit: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T12:50:17.000Z [admit C] exit 1
+2026-10-21T12:51:47.000Z [admit C] admit: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T12:51:47.000Z [admit C] admitted leaf 2 txid 26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf lockTime 1792582607 (mtp 1792582608) rosterSeq 1 rosterRoot af2a77ecd581306e7c8abe41c195b4804d2c6d1365f57d0302b538c13d537568 -> 26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf:0
+2026-10-21T12:51:47.000Z [admit C] exit 0
+2026-10-21T12:51:59.000Z CYCLE admit C txid=26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf size=941527 fee=942 machine=10000 lockTime=1792582607 mtp=1792582608
+2026-10-21T12:52:04.000Z admitted C at leaf 2 (chain time 1792582607, round 1)
+2026-10-21T12:52:21.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:52:21.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:52:21.000Z [round 1 A] exit 3
+2026-10-21T12:53:37.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:53:37.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:53:37.000Z [round 1 A] exit 3
+2026-10-21T12:54:54.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:54:54.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:54:54.000Z [round 1 A] exit 3
+2026-10-21T12:56:11.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:56:11.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:56:11.000Z [round 1 A] exit 3
+2026-10-21T12:57:28.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:57:28.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:57:28.000Z [round 1 A] exit 3
+2026-10-21T12:58:46.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T12:58:46.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T12:58:46.000Z [round 1 A] exit 3
+2026-10-21T13:00:04.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:00:04.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:00:04.000Z [round 1 A] exit 3
+2026-10-21T13:01:21.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:01:21.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:01:21.000Z [round 1 A] exit 3
+2026-10-21T13:02:41.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:02:41.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:02:41.000Z [round 1 A] exit 3
+2026-10-21T13:04:00.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:04:00.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:04:00.000Z [round 1 A] exit 3
+2026-10-21T13:05:17.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:05:17.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:05:17.000Z [round 1 A] exit 3
+2026-10-21T13:06:34.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:06:34.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:06:34.000Z [round 1 A] exit 3
+2026-10-21T13:07:50.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:07:50.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:07:50.000Z [round 1 A] exit 3
+2026-10-21T13:09:07.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:09:07.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:09:07.000Z [round 1 A] exit 3
+2026-10-21T13:10:26.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:10:26.000Z [round 1 A] round 1 member 0 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:10:26.000Z [round 1 A] exit 3
+2026-10-21T13:11:54.000Z [round 1 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:11:54.000Z [round 1 A] round 1 member 0 delivered 1 earned 150 sats: cycle d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3 lockTime 1792583808 (mtp 1792583809) reward 500 -> d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3:0
+2026-10-21T13:11:54.000Z [round 1 A] exit 0
+2026-10-21T13:12:36.000Z CYCLE round 1 A txid=d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3 size=942311 fee=943 machine=9350 lockTime=1792583808 mtp=1792583809 round=1
+2026-10-21T13:12:43.000Z round 1 A: delivered reading 1001
+2026-10-21T13:13:04.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:13:04.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:13:04.000Z [round 1 B] exit 3
+2026-10-21T13:14:27.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:14:27.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:14:27.000Z [round 1 B] exit 3
+2026-10-21T13:15:47.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:15:47.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:15:47.000Z [round 1 B] exit 3
+2026-10-21T13:17:12.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:17:12.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:17:12.000Z [round 1 B] exit 3
+2026-10-21T13:18:40.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:18:40.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:18:40.000Z [round 1 B] exit 3
+2026-10-21T13:20:00.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:20:00.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:20:00.000Z [round 1 B] exit 3
+2026-10-21T13:21:43.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:21:43.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:21:43.000Z [round 1 B] exit 3
+2026-10-21T13:23:14.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:23:14.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:23:14.000Z [round 1 B] exit 3
+2026-10-21T13:24:44.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:24:44.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:24:44.000Z [round 1 B] exit 3
+2026-10-21T13:26:03.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:26:03.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:26:03.000Z [round 1 B] exit 3
+2026-10-21T13:27:24.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:27:24.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:27:24.000Z [round 1 B] exit 3
+2026-10-21T13:28:47.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:28:47.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:28:47.000Z [round 1 B] exit 3
+2026-10-21T13:30:18.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:30:18.000Z [round 1 B] round 1 member 1 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:30:18.000Z [round 1 B] exit 3
+2026-10-21T13:32:05.000Z [round 1 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:32:05.000Z [round 1 B] round 1 member 1 delivered 1 earned 150 sats: cycle 63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c lockTime 1792585009 (mtp 1792585010) reward 500 -> 63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c:0
+2026-10-21T13:32:05.000Z [round 1 B] exit 0
+2026-10-21T13:32:15.000Z CYCLE round 1 B txid=63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c size=942312 fee=943 machine=8700 lockTime=1792585009 mtp=1792585010 round=1
+2026-10-21T13:32:24.000Z round 1 B: delivered reading 2001
+2026-10-21T13:32:25.000Z round 1 C: the round ended before the reading went out (missed)
+2026-10-21T13:32:58.000Z [round 2 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:32:58.000Z [round 2 A] round 2 member 0 delivered 2 earned 300 sats: cycle e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655 lockTime 1792586210 (mtp 1792586211) reward 500 -> e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655:0
+2026-10-21T13:32:58.000Z [round 2 A] exit 0
+2026-10-21T13:33:06.000Z CYCLE round 2 A txid=e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655 size=942312 fee=943 machine=8050 lockTime=1792586210 mtp=1792586211 round=2
+2026-10-21T13:33:15.000Z round 2 A: delivered reading 1002
+2026-10-21T13:33:42.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:33:42.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:33:42.000Z [round 2 B] exit 3
+2026-10-21T13:35:05.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:35:05.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:35:05.000Z [round 2 B] exit 3
+2026-10-21T13:36:33.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:36:33.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:36:33.000Z [round 2 B] exit 3
+2026-10-21T13:38:12.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:38:12.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:38:12.000Z [round 2 B] exit 3
+2026-10-21T13:39:42.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:39:42.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:39:42.000Z [round 2 B] exit 3
+2026-10-21T13:41:08.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:41:08.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:41:08.000Z [round 2 B] exit 3
+2026-10-21T13:42:32.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:42:32.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:42:32.000Z [round 2 B] exit 3
+2026-10-21T13:44:10.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:44:10.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:44:10.000Z [round 2 B] exit 3
+2026-10-21T13:45:37.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:45:37.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:45:37.000Z [round 2 B] exit 3
+2026-10-21T13:47:04.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:47:04.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:47:04.000Z [round 2 B] exit 3
+2026-10-21T13:48:30.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:48:30.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:48:30.000Z [round 2 B] exit 3
+2026-10-21T13:49:54.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:49:54.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:49:54.000Z [round 2 B] exit 3
+2026-10-21T13:51:18.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:51:18.000Z [round 2 B] round 2 member 1 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:51:18.000Z [round 2 B] exit 3
+2026-10-21T13:52:56.000Z [round 2 B] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:52:56.000Z [round 2 B] round 2 member 1 delivered 2 earned 300 sats: cycle 86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32 lockTime 1792587009 (mtp 1792587010) reward 500 -> 86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32:0
+2026-10-21T13:52:56.000Z [round 2 B] exit 0
+2026-10-21T13:53:09.000Z CYCLE round 2 B txid=86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32 size=942312 fee=943 machine=7400 lockTime=1792587009 mtp=1792587010 round=2
+2026-10-21T13:53:20.000Z round 2 B: delivered reading 2002
+2026-10-21T13:53:49.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:53:49.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:53:49.000Z [round 2 C] exit 3
+2026-10-21T13:55:17.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:55:17.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:55:17.000Z [round 2 C] exit 3
+2026-10-21T13:56:58.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:56:58.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:56:58.000Z [round 2 C] exit 3
+2026-10-21T13:58:27.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:58:27.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:58:27.000Z [round 2 C] exit 3
+2026-10-21T13:59:56.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T13:59:56.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T13:59:56.000Z [round 2 C] exit 3
+2026-10-21T14:01:25.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:01:25.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:01:25.000Z [round 2 C] exit 3
+2026-10-21T14:02:55.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:02:55.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:02:55.000Z [round 2 C] exit 3
+2026-10-21T14:04:23.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:04:23.000Z [round 2 C] round 2 member 2 delivered 0 earned 0 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:04:23.000Z [round 2 C] exit 3
+2026-10-21T14:06:08.000Z [round 2 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:06:08.000Z [round 2 C] round 2 member 2 delivered 1 earned 150 sats: cycle 481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65 lockTime 1792588228 (mtp 1792588229) reward 500 -> 481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65:0
+2026-10-21T14:06:08.000Z [round 2 C] exit 0
+2026-10-21T14:06:20.000Z CYCLE round 2 C txid=481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65 size=942313 fee=943 machine=6750 lockTime=1792588228 mtp=1792588229 round=2
+2026-10-21T14:06:29.000Z round 2 C: delivered reading 3002
+2026-10-21T14:07:06.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:07:06.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:07:06.000Z [remove B] exit 1
+2026-10-21T14:08:43.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:08:43.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:08:43.000Z [remove B] exit 1
+2026-10-21T14:10:22.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:10:22.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:10:22.000Z [remove B] exit 1
+2026-10-21T14:11:59.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:11:59.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:11:59.000Z [remove B] exit 1
+2026-10-21T14:13:34.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:13:34.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:13:34.000Z [remove B] exit 1
+2026-10-21T14:15:08.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:15:08.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:15:08.000Z [remove B] exit 1
+2026-10-21T14:16:44.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:16:44.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:16:44.000Z [remove B] exit 1
+2026-10-21T14:18:25.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:18:25.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:18:25.000Z [remove B] exit 1
+2026-10-21T14:20:05.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:20:05.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:20:05.000Z [remove B] exit 1
+2026-10-21T14:21:43.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:21:43.000Z [remove B] ERR remove: the machine needs the chain time (MTP) to move 60 s past its last cycle. Run the command again after the next block.
+2026-10-21T14:21:43.000Z [remove B] exit 1
+2026-10-21T14:23:39.000Z [remove B] remove: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set
+2026-10-21T14:23:39.000Z [remove B] removed leaf 1 txid e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb lockTime 1792589429 (mtp 1792589430) rosterSeq 2 rosterRoot e24feb049b7d1ac1cd30f4106dccff74f65b1780f51099bd7d5a408485f4c98e -> e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb:0
+2026-10-21T14:23:39.000Z [remove B] exit 0
+2026-10-21T14:23:51.000Z CYCLE remove B txid=e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb size=942289 fee=943 machine=6250 lockTime=1792589429 mtp=1792589430
+2026-10-21T14:23:57.000Z removed B (leaf 1) at chain time 1792589429 in round 2
+2026-10-21T14:23:57.000Z round 3 A: waiting for chain time 1792589730 (now 1792589429, 301 s)
+2026-10-21T14:53:14.000Z [round 3 A] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:53:14.000Z [round 3 A] round 3 member 0 delivered 3 earned 450 sats: cycle 5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57 lockTime 1792590701 (mtp 1792590702) reward 500 -> 5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57:0
+2026-10-21T14:53:14.000Z [round 3 A] exit 0
+2026-10-21T14:53:27.000Z CYCLE round 3 A txid=5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57 size=942314 fee=943 machine=5600 lockTime=1792590701 mtp=1792590702 round=3
+2026-10-21T14:53:48.000Z round 3 A: delivered reading 1003
+2026-10-21T14:54:29.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:54:29.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:54:29.000Z [round 3 C] exit 3
+2026-10-21T14:56:07.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:56:07.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:56:07.000Z [round 3 C] exit 3
+2026-10-21T14:57:45.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:57:45.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:57:45.000Z [round 3 C] exit 3
+2026-10-21T14:59:25.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T14:59:25.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T14:59:25.000Z [round 3 C] exit 3
+2026-10-21T15:01:04.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:01:04.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:01:04.000Z [round 3 C] exit 3
+2026-10-21T15:02:44.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:02:44.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:02:44.000Z [round 3 C] exit 3
+2026-10-21T15:04:24.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:04:24.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:04:24.000Z [round 3 C] exit 3
+2026-10-21T15:06:00.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:06:00.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:06:00.000Z [round 3 C] exit 3
+2026-10-21T15:07:35.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:07:35.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:07:35.000Z [round 3 C] exit 3
+2026-10-21T15:09:16.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:09:16.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:09:16.000Z [round 3 C] exit 3
+2026-10-21T15:10:50.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:10:50.000Z [round 3 C] round 3 member 2 delivered 1 earned 150 sats: skipped: waiting for MTP (reading dropped: run again after the next block)
+2026-10-21T15:10:50.000Z [round 3 C] exit 3
+2026-10-21T15:12:42.000Z [round 3 C] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:12:42.000Z [round 3 C] round 3 member 2 delivered 2 earned 300 sats: cycle 9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46 lockTime 1792590825 (mtp 1792590826) reward 224 -> 9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46:0
+2026-10-21T15:12:42.000Z [round 3 C] exit 0
+2026-10-21T15:12:52.000Z CYCLE round 3 C txid=9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46 size=942311 fee=943 machine=5226 lockTime=1792590825 mtp=1792590826 round=3
+2026-10-21T15:13:00.000Z round 3 C: delivered reading 3003
+2026-10-21T15:13:36.000Z [round 3 B (must be refused)] gateway: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=tree consortium=start:1792582530,period:3600,rounds:3 bridge=given interval=30s
+2026-10-21T15:13:36.000Z [round 3 B (must be refused)] gateway: this gateway is not in the roster (key hash 85bd4a51fb11db6deb8f7b22065c18de154436221518957187a58dde3a307419); ask the sponsor to admit it
+2026-10-21T15:13:36.000Z [round 3 B (must be refused)] exit 1
+2026-10-21T15:13:36.000Z REFUSAL B round 3: gateway: this gateway is not in the roster (key hash 85bd4a51fb11db6deb8f7b22065c18de154436221518957187a58dde3a307419); ask the sponsor to admit it
+2026-10-21T15:13:42.000Z END: waiting for chain time 1792593331 (now 1792590825, 2506 s)
+2026-10-21T16:10:25.000Z [keeper tick] keeper: network=testnet wif=set rabin_p=set rabin_q=set payout_address=not set serial=not set machine=402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0 slot=not set sign_anyway=false mode=slots consortium=not set interval=1s
+2026-10-21T16:10:25.000Z [keeper tick] cycle 5ded52d2bd951122160eed23f167b2fe31c341ca4100ff8519adb1aebdd5bfc5 lockTime 1792594314 (mtp 1792594315) reward 500 -> halted
+2026-10-21T16:10:25.000Z [keeper tick] exit 0
+2026-10-21T16:10:37.000Z CYCLE halt txid=5ded52d2bd951122160eed23f167b2fe31c341ca4100ff8519adb1aebdd5bfc5 size=470770 fee=471 machine=4726 lockTime=1792594314 mtp=1792594315
+2026-10-21T16:10:40.000Z machine halted: txid 5ded52d2bd951122160eed23f167b2fe31c341ca4100ff8519adb1aebdd5bfc5 refund 5228 sats (funding balance before 9906578)
+2026-10-21T16:11:43.000Z [inspect --history] output 9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46:0  5226 sats
+2026-10-21T16:11:43.000Z [inspect --history] pc 169  lastTime 1792590825
+2026-10-21T16:11:43.000Z [inspect --history] ds [0]
+2026-10-21T16:11:43.000Z [inspect --history] rs []
+2026-10-21T16:11:43.000Z [inspect --history] out []
+2026-10-21T16:11:43.000Z [inspect --history] instance a36d5f5e48d91a10a5ccfa1a5cd3aedb5f7fbff61d28f1f836caa6e79cf44443
+2026-10-21T16:11:43.000Z [inspect --history] beneficiary 4d6209433a8c33a20492502a27cb7b9358badcf2  reward min 100 slope 1 max 500
+2026-10-21T16:11:43.000Z [inspect --history] dead-man: 21600 s (6 hours)
+2026-10-21T16:11:43.000Z [inspect --history] program:
+2026-10-21T16:11:43.000Z [inspect --history]   0: TIME
+2026-10-21T16:11:43.000Z [inspect --history]   1: LIT 1792593330
+2026-10-21T16:11:43.000Z [inspect --history]   6: /
+2026-10-21T16:11:43.000Z [inspect --history]   7: IF 13
+2026-10-21T16:11:43.000Z [inspect --history]   12: HALT
+2026-10-21T16:11:43.000Z [inspect --history]   13: IN
+2026-10-21T16:11:43.000Z [inspect --history]   14: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   15: IF 109
+2026-10-21T16:11:43.000Z [inspect --history]   20: LIT 1
+2026-10-21T16:11:43.000Z [inspect --history]   25: -
+2026-10-21T16:11:43.000Z [inspect --history]   26: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   27: IF 66
+2026-10-21T16:11:43.000Z [inspect --history]   32: LIT 1
+2026-10-21T16:11:43.000Z [inspect --history]   37: -
+2026-10-21T16:11:43.000Z [inspect --history]   38: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   39: IF 50
+2026-10-21T16:11:43.000Z [inspect --history]   44: LIT 0
+2026-10-21T16:11:43.000Z [inspect --history]   49: VERIFY
+2026-10-21T16:11:43.000Z [inspect --history]   50: LIT 1275068416
+2026-10-21T16:11:43.000Z [inspect --history]   55: REMOVE
+2026-10-21T16:11:43.000Z [inspect --history]   56: LIT 0
+2026-10-21T16:11:43.000Z [inspect --history]   61: IF 99
+2026-10-21T16:11:43.000Z [inspect --history]   66: LIT 1207959552
+2026-10-21T16:11:43.000Z [inspect --history]   71: TIME
+2026-10-21T16:11:43.000Z [inspect --history]   72: LIT 1792582530
+2026-10-21T16:11:43.000Z [inspect --history]   77: /
+2026-10-21T16:11:43.000Z [inspect --history]   78: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   79: IF 98
+2026-10-21T16:11:43.000Z [inspect --history]   84: DROP
+2026-10-21T16:11:43.000Z [inspect --history]   85: TIME
+2026-10-21T16:11:43.000Z [inspect --history]   86: LIT 1792578930
+2026-10-21T16:11:43.000Z [inspect --history]   91: -
+2026-10-21T16:11:43.000Z [inspect --history]   92: LIT 3600
+2026-10-21T16:11:43.000Z [inspect --history]   97: /
+2026-10-21T16:11:43.000Z [inspect --history]   98: ADMIT
+2026-10-21T16:11:43.000Z [inspect --history]   99: LIT 0
+2026-10-21T16:11:43.000Z [inspect --history]   104: IF 168
+2026-10-21T16:11:43.000Z [inspect --history]   109: TIME
+2026-10-21T16:11:43.000Z [inspect --history]   110: LIT 1792582530
+2026-10-21T16:11:43.000Z [inspect --history]   115: /
+2026-10-21T16:11:43.000Z [inspect --history]   116: VERIFY
+2026-10-21T16:11:43.000Z [inspect --history]   117: LIT 150
+2026-10-21T16:11:43.000Z [inspect --history]   122: TIME
+2026-10-21T16:11:43.000Z [inspect --history]   123: LIT 1792578930
+2026-10-21T16:11:43.000Z [inspect --history]   128: -
+2026-10-21T16:11:43.000Z [inspect --history]   129: LIT 3600
+2026-10-21T16:11:43.000Z [inspect --history]   134: /
+2026-10-21T16:11:43.000Z [inspect --history]   135: MEMBER
+2026-10-21T16:11:43.000Z [inspect --history]   136: DROP
+2026-10-21T16:11:43.000Z [inspect --history]   137: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   138: LIT 1073741824
+2026-10-21T16:11:43.000Z [inspect --history]   143: +
+2026-10-21T16:11:43.000Z [inspect --history]   144: IN
+2026-10-21T16:11:43.000Z [inspect --history]   145: DUP
+2026-10-21T16:11:43.000Z [inspect --history]   146: LIT 100001
+2026-10-21T16:11:43.000Z [inspect --history]   151: /
+2026-10-21T16:11:43.000Z [inspect --history]   152: IF 163
+2026-10-21T16:11:43.000Z [inspect --history]   157: LIT 0
+2026-10-21T16:11:43.000Z [inspect --history]   162: VERIFY
+2026-10-21T16:11:43.000Z [inspect --history]   163: SWAP
+2026-10-21T16:11:43.000Z [inspect --history]   164: OVER
+2026-10-21T16:11:43.000Z [inspect --history]   165: ATTESTM
+2026-10-21T16:11:43.000Z [inspect --history]   166: OUTH
+2026-10-21T16:11:43.000Z [inspect --history]   167: PAYLEAF
+2026-10-21T16:11:43.000Z [inspect --history]   168: YIELD
+2026-10-21T16:11:43.000Z [inspect --history]   169: IF 0
+2026-10-21T16:11:43.000Z [inspect --history]   174: HALT
+2026-10-21T16:11:43.000Z [inspect --history] tree: roster root 1ecc89bd31ba8527f731bd8eb24ea6009f55ad41e93a5f6fd9a5ef9cabe85ffd seq 2
+2026-10-21T16:11:43.000Z [inspect --history] tree: sponsor aece86f0d130..
+2026-10-21T16:11:43.000Z [inspect --history] tree: logHash 6979b55c5e95492e252aefe21aa32c31a096b23eafa6d329971bbe4988e701a8
+2026-10-21T16:11:43.000Z [inspect --history] tree: 2 members
+2026-10-21T16:11:43.000Z [inspect --history] history (9 cycles, oldest first):
+2026-10-21T16:11:43.000Z [inspect --history]   26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf lockTime 1792582607 reward 500 -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3 lockTime 1792583808 reward 500 payout 150 to 0375c5533904cea31e0e8e0b227c17d30654b03f (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c lockTime 1792585009 reward 500 payout 150 to c3eeda0609ebeaee99064a8b3b7dd46897dff89f (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655 lockTime 1792586210 reward 500 payout 150 to 0375c5533904cea31e0e8e0b227c17d30654b03f (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32 lockTime 1792587009 reward 500 payout 150 to c3eeda0609ebeaee99064a8b3b7dd46897dff89f (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65 lockTime 1792588228 reward 500 payout 150 to e9bfe006acd78c3ebc347942c48498875ac2b71c (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb lockTime 1792589429 reward 500 -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57 lockTime 1792590701 reward 500 payout 150 to 0375c5533904cea31e0e8e0b227c17d30654b03f (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history]   9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46 lockTime 1792590825 reward 224 payout 150 to e9bfe006acd78c3ebc347942c48498875ac2b71c (tree member) -> pc 169
+2026-10-21T16:11:43.000Z [inspect --history] roster (2 members):
+2026-10-21T16:11:43.000Z [inspect --history]   [0] key=00d980da35e9.. payout=0375c5533904cea31e0e8e0b227c17d30654b03f lastRound 3
+2026-10-21T16:11:43.000Z [inspect --history]   [2] key=f183695d216d.. payout=e9bfe006acd78c3ebc347942c48498875ac2b71c lastRound 3
+2026-10-21T16:11:43.000Z [inspect --history] readings (7):
+2026-10-21T16:11:43.000Z [inspect --history]   round 1 member 0 logged [1001] paid 150 sats (d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3)
+2026-10-21T16:11:43.000Z [inspect --history]   round 1 member 1 logged [2001] paid 150 sats (63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c)
+2026-10-21T16:11:43.000Z [inspect --history]   round 2 member 0 logged [1002] paid 150 sats (e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655)
+2026-10-21T16:11:43.000Z [inspect --history]   round 2 member 1 logged [2002] paid 150 sats (86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32)
+2026-10-21T16:11:43.000Z [inspect --history]   round 2 member 2 logged [3002] paid 150 sats (481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65)
+2026-10-21T16:11:43.000Z [inspect --history]   round 3 member 0 logged [1003] paid 150 sats (5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57)
+2026-10-21T16:11:43.000Z [inspect --history]   round 3 member 2 logged [3003] paid 150 sats (9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46)
+2026-10-21T16:11:43.000Z [inspect --history] admissions and removals (2):
+2026-10-21T16:11:43.000Z [inspect --history]   seq 1 admit leaf 2 key=f183695d216d.. payout=e9bfe006acd78c3ebc347942c48498875ac2b71c (26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf)
+2026-10-21T16:11:43.000Z [inspect --history]   seq 2 remove leaf 1 (e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb)
+2026-10-21T16:11:43.000Z [inspect --history] logHash: verified
+2026-10-21T16:11:43.000Z [inspect --history] exit 0
+2026-10-21T16:11:43.000Z VERIFY logHash verified, 7 paid readings, admissions [2], removals [1], history cycles 9
+2026-10-21T16:11:43.000Z FAILED: verification failed: paid reading missing: round:leaf 1:2; 7 paid readings, expected 8

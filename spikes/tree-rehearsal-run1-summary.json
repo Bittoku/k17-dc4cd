@@ -1,0 +1,219 @@
+{
+ "ok": false,
+ "failure": "verification failed: paid reading missing: round:leaf 1:2; 7 paid readings, expected 8",
+ "network": "testnet",
+ "program": {
+  "start": 1792582530,
+  "period": 3600,
+  "rounds": 3,
+  "bountyPerReading": 150,
+  "range": {
+   "min": 0,
+   "max": 100000
+  },
+  "startedMtp": 1792580730
+ },
+ "deposit": 10500,
+ "machine": "402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0:0",
+ "instanceId": "a36d5f5e48d91a10a5ccfa1a5cd3aedb5f7fbff61d28f1f836caa6e79cf44443",
+ "genesisInscription": "a416e4640de97b3617a3f99cc456633a1b276867c07ee14d434dfc53011ffb80:0",
+ "fundingTx": "ace6c116dbdc2ac746e8fdc2fcb50c226a42b161664debb2c45f831ae705741d",
+ "cycles": [
+  {
+   "label": "deploy",
+   "txid": "402c076536f241181e435b114ce87d4015d67c02a63a1f76177bd313ff636db0",
+   "size": 469286,
+   "machineSats": 10500,
+   "fee": 470
+  },
+  {
+   "label": "admit C",
+   "txid": "26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf",
+   "lockTime": 1792582607,
+   "mtp": 1792582608,
+   "size": 941527,
+   "machineSats": 10000,
+   "fee": 942
+  },
+  {
+   "label": "round 1 A",
+   "txid": "d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3",
+   "round": 1,
+   "lockTime": 1792583808,
+   "mtp": 1792583809,
+   "size": 942311,
+   "machineSats": 9350,
+   "fee": 943
+  },
+  {
+   "label": "round 1 B",
+   "txid": "63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c",
+   "round": 1,
+   "lockTime": 1792585009,
+   "mtp": 1792585010,
+   "size": 942312,
+   "machineSats": 8700,
+   "fee": 943
+  },
+  {
+   "label": "round 2 A",
+   "txid": "e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655",
+   "round": 2,
+   "lockTime": 1792586210,
+   "mtp": 1792586211,
+   "size": 942312,
+   "machineSats": 8050,
+   "fee": 943
+  },
+  {
+   "label": "round 2 B",
+   "txid": "86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32",
+   "round": 2,
+   "lockTime": 1792587009,
+   "mtp": 1792587010,
+   "size": 942312,
+   "machineSats": 7400,
+   "fee": 943
+  },
+  {
+   "label": "round 2 C",
+   "txid": "481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65",
+   "round": 2,
+   "lockTime": 1792588228,
+   "mtp": 1792588229,
+   "size": 942313,
+   "machineSats": 6750,
+   "fee": 943
+  },
+  {
+   "label": "remove B",
+   "txid": "e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb",
+   "lockTime": 1792589429,
+   "mtp": 1792589430,
+   "size": 942289,
+   "machineSats": 6250,
+   "fee": 943
+  },
+  {
+   "label": "round 3 A",
+   "txid": "5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57",
+   "round": 3,
+   "lockTime": 1792590701,
+   "mtp": 1792590702,
+   "size": 942314,
+   "machineSats": 5600,
+   "fee": 943
+  },
+  {
+   "label": "round 3 C",
+   "txid": "9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46",
+   "round": 3,
+   "lockTime": 1792590825,
+   "mtp": 1792590826,
+   "size": 942311,
+   "machineSats": 5226,
+   "fee": 943
+  },
+  {
+   "label": "halt",
+   "txid": "5ded52d2bd951122160eed23f167b2fe31c341ca4100ff8519adb1aebdd5bfc5",
+   "lockTime": 1792594314,
+   "mtp": 1792594315,
+   "size": 470770,
+   "machineSats": 4726,
+   "fee": 471
+  }
+ ],
+ "totalCycleFees": 9427,
+ "delivered": {
+  "1:A": "d33e4916e5407100328740315f7e52c782888da2b4811f4d68d23b0a217777c3",
+  "1:B": "63fea017b072e5ed3e095e20dd8410928e1142b3ef28d58b317c078a21054f0c",
+  "2:A": "e9609ad215ca0b35a625e5600d630e7f20328da9c6d92a24a5ea44e599877655",
+  "2:B": "86abbcf1204813ac7e4b83fdcaa6da53a35f9a6439fd5118ccb534e73f1b5f32",
+  "2:C": "481d0f6541345a1cdb8c2191ef6c6c71844641a90e1b51789c884e48309eff65",
+  "3:A": "5cd0db9925eafcf12c0293863f254c866a5585615043e43d9ca88a38cbae1e57",
+  "3:C": "9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46"
+ },
+ "missed": [
+  "1:C"
+ ],
+ "admitted": {
+  "leaf": 2,
+  "txid": "26a19568e0dd2478cdbb1c231a0df08f722557b597593e6cf2ac8223b4cc77bf"
+ },
+ "removed": {
+  "leaf": 1,
+  "txid": "e47afeab6ca46f307b6244c1948e884af4ebd486d9bd38d1868151c5189e76cb"
+ },
+ "refusals": [
+  {
+   "stage": "round 3",
+   "gateway": "B",
+   "message": "gateway: this gateway is not in the roster (key hash 85bd4a51fb11db6deb8f7b22065c18de154436221518957187a58dde3a307419); ask the sponsor to admit it"
+  }
+ ],
+ "halted": {
+  "txid": "5ded52d2bd951122160eed23f167b2fe31c341ca4100ff8519adb1aebdd5bfc5",
+  "refund": 5228
+ },
+ "verified": {
+  "tip": "9993ca753acf4685dee8fae6a435406dad77ce1af87bc9d6414b460fe02b5d46:0",
+  "logHash": "verified",
+  "historyCycles": 9,
+  "readings": [
+   {
+    "round": 1,
+    "member": 0,
+    "logged": "1001",
+    "paid": 150
+   },
+   {
+    "round": 1,
+    "member": 1,
+    "logged": "2001",
+    "paid": 150
+   },
+   {
+    "round": 2,
+    "member": 0,
+    "logged": "1002",
+    "paid": 150
+   },
+   {
+    "round": 2,
+    "member": 1,
+    "logged": "2002",
+    "paid": 150
+   },
+   {
+    "round": 2,
+    "member": 2,
+    "logged": "3002",
+    "paid": 150
+   },
+   {
+    "round": 3,
+    "member": 0,
+    "logged": "1003",
+    "paid": 150
+   },
+   {
+    "round": 3,
+    "member": 2,
+    "logged": "3003",
+    "paid": 150
+   }
+  ],
+  "admissions": [
+   2
+  ],
+  "removals": [
+   1
+  ],
+  "problems": [
+   "paid reading missing: round:leaf 1:2",
+   "7 paid readings, expected 8"
+  ]
+ },
+ "fundingBefore": 9936439
+}

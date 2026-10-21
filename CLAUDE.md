@@ -16,9 +16,9 @@ held write-up belong here.
   functions in `src/programs/`. Keep every hop or stage inside one K=40 cycle; the relay test
   asserts this. If a program grows past a cycle, split it at a `yield`, do not raise K.
 - The compiler appends `HALT` after top-level code and places colon definitions after it.
-- `docs/euroforth-writeup-draft.md` is held until the K17 defensive publication is public
-  (decision 2026-10-18: publish first, no provisional filing). Do not publish, post, or send it to
-  the DC4CD authors before that, and only on Dave's explicit go.
+- `docs/euroforth-writeup-draft.md` is public with this repository (published 2026-10-22, Dave's go; the K17
+  disclosure is at https://www.tdcommons.org/dpubs_series/12327/). Sending it to the DC4CD authors or
+  submitting it anywhere still needs Dave's explicit go.
 - Commit messages carry no AI attribution lines (user rule).
 
 ## Chain tooling (k17forth)

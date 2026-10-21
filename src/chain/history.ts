@@ -63,6 +63,12 @@ export interface DecodedCycle {
      */
     treeOp: TreeOp
     /**
+     * The cells that OUTH folded into the machine's `logHash` during the
+     * cycle, in order (empty when the cycle ran no OUTH or is ambiguous).
+     * Folding them over all cycles gives the `logHash` of the machine.
+     */
+    logged: bigint[]
+    /**
      * The witness cells that the cycle read with IN, in order (empty when the
      * unlocking script is unreadable). In the tree generator a reading cycle
      * has the witness `[0, reading]`.
@@ -157,6 +163,8 @@ function chunkNumber(chunk: ScriptChunk): bigint {
 
 /** What a replay of the cycle gives. */
 interface Replay {
+    /** Cells that OUTH folded during the cycle. */
+    logged: bigint[]
     reward: number
     payout?: PayoutOutput
     treeOp: TreeOp
@@ -292,6 +300,7 @@ function replayCycle(
         )
             return null
         const treeFields = {
+            logged: plan.outhCells,
             treeOp: plan.treeOp,
             rosterRoot: plan.nextState.rosterRoot,
             rosterSeq: plan.nextState.rosterSeq,
@@ -373,6 +382,7 @@ export async function walkHistory(
             halted: !after.machine,
             state: after.machine,
             treeOp: replay ? replay.treeOp : 'none',
+            logged: replay ? replay.logged : [],
             witness: unlocking ? decodeCells(unlocking.witnessHex) : [],
             tree: unlocking?.tree,
             rosterRoot: after.instance

@@ -8,7 +8,7 @@
  * print "mismatch" and exit non-zero. No test uses the network.
  */
 import { expect } from 'chai'
-import { chmodSync, mkdtempSync, writeFileSync } from 'fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { TestWallet, bsv, toByteString } from 'scrypt-ts'
@@ -62,15 +62,21 @@ const GENESIS_MEMBERS: GenesisRoster['members'] = [
     },
 ]
 
+/** One deployed machine on its own chain, with the config of its sponsor. */
+interface Scenario {
+    chain: MemoryChain
+    config: string
+    cfg: GatewayConfig
+    tipOutpoint: string
+}
+
 describe('inspect on a tree machine', function () {
     this.timeout(900_000)
     const dir = mkdtempSync(join(tmpdir(), 'k17inspect-'))
     let counter = 0
     let clockBase = T0 + 60
-    let chain: MemoryChain
-    let config: string
-    let cfg: GatewayConfig
-    let tipOutpoint: string
+    let main: Scenario
+    let derived: Scenario
 
     /** Write a private file and return its path. */
     function file(text: string): string {
@@ -81,7 +87,7 @@ describe('inspect on a tree machine', function () {
     }
 
     /** Sponsor command dependencies: a clock that follows the chain. */
-    function parts(): SponsorDeps {
+    function parts(chain: MemoryChain): SponsorDeps {
         return {
             provider: chain,
             signer: new TestWallet(WALLET_KEY, chain),
@@ -91,7 +97,10 @@ describe('inspect on a tree machine', function () {
     }
 
     /** Output: the outpoint at the tip of the machine, found by following the spends. */
-    async function findTip(): Promise<string> {
+    async function findTip(
+        chain: MemoryChain,
+        cfg: GatewayConfig
+    ): Promise<string> {
         let op = parseOutpoint(cfg.machineOutpoint as string)
         for (;;) {
             const next = await chain.spentBy(op)
@@ -103,21 +112,22 @@ describe('inspect on a tree machine', function () {
 
     /** A paid reading of a member, relayed through a keeper. */
     async function pay(
+        s: Scenario,
         member: typeof alice,
         index: number,
         round: number,
         reading: bigint
     ): Promise<void> {
-        const deps = parts()
+        const deps = parts(s.chain)
         const keeper = new Keeper(
-            cfg,
-            chain,
+            s.cfg,
+            s.chain,
             deps.signer as TestWallet,
             deps.keeper
         )
         const tip = await keeper.sync()
-        const { mirror, machine } = await loadRoster(cfg, {
-            provider: chain,
+        const { mirror, machine } = await loadRoster(s.cfg, {
+            provider: s.chain,
             outpoint: tip,
         })
         const paid = await keeper.tick((deps.now as () => number)(), {
@@ -136,28 +146,33 @@ describe('inspect on a tree machine', function () {
     }
 
     /** Run inspect; output: exit code and the printed text. */
-    async function inspect(args: string[], source: TxSource = chain) {
+    async function inspect(args: string[], source: TxSource) {
         const { lines, io } = sink()
         const code = await inspectCommand(args, io, source)
         return { code, text: lines.join('\n') }
     }
 
-    before(async () => {
-        await K17Machine.loadArtifact(
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            require('k17-vm/artifacts/k17Machine.json')
-        )
-        chain = new MemoryChain()
+    /**
+     * Deploy a tree machine with Alice as the genesis member on a new chain.
+     * Input: a change to the Forth source of the program. Output: the
+     * scenario with the deployment only.
+     */
+    async function deploy(
+        change: (source: string) => string = (text) => text
+    ): Promise<Scenario> {
+        const chain = new MemoryChain()
         const source = file(
-            treeConsortiumSource({
-                start: START,
-                period: PERIOD,
-                rounds: ROUNDS,
-                bountyPerReading: 150,
-                range: { min: 4000, max: 6000 },
-            })
+            change(
+                treeConsortiumSource({
+                    start: START,
+                    period: PERIOD,
+                    rounds: ROUNDS,
+                    bountyPerReading: 150,
+                    range: { min: 4000, max: 6000 },
+                })
+            )
         )
-        config = file(
+        const config = file(
             `[network]\nname = "testnet"\n[wallet]\nwif = "${WALLET_KEY.toWIF()}"\n`
         )
         const members = file(JSON.stringify({ members: GENESIS_MEMBERS }))
@@ -190,52 +205,75 @@ describe('inspect on a tree machine', function () {
         expect(lines.join('\n'), 'deploy output').to.not.contain('ERR')
         expect(code).to.equal(0)
         saveAttesterKey(config, sponsorKey.priv.p, sponsorKey.priv.q)
-        cfg = loadConfig(config)
+        const cfg = loadConfig(config)
+        return {
+            chain,
+            config,
+            cfg,
+            tipOutpoint: cfg.machineOutpoint as string,
+        }
+    }
 
-        // admit Bob (before the start: lastRound 0), two readings, remove Bob
+    before(async () => {
+        await K17Machine.loadArtifact(
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            require('k17-vm/artifacts/k17Machine.json')
+        )
+        // main: admit Bob (before the start: lastRound 0), two readings, remove Bob
+        main = await deploy()
+        clockBase = T0 + 60
         const { lines: adminLines, io: adminIo } = sink()
         expect(
             await admitCommand(
                 [
-                    config,
+                    main.config,
                     '--member-key',
                     file(pubKeyBytes(bob.pub) + '\n'),
                     '--payout',
                     PAYOUT_ADDRESS.toString(),
                 ],
                 adminIo,
-                parts()
+                parts(main.chain)
             ),
             adminLines.join('\n')
         ).to.equal(0)
-        cfg = loadConfig(config)
+        main.cfg = loadConfig(main.config)
         clockBase = START
-        await pay(alice, ALICE_INDEX, 1, 5000n)
+        await pay(main, alice, ALICE_INDEX, 1, 5000n)
         clockBase = START + PERIOD
-        await pay(bob, 0, 2, 4242n)
+        await pay(main, bob, 0, 2, 4242n)
         const { lines: removeLines, io: removeIo } = sink()
         expect(
             await removeCommand(
-                [config, '--member-key', file(pubKeyBytes(bob.pub) + '\n')],
+                [
+                    main.config,
+                    '--member-key',
+                    file(pubKeyBytes(bob.pub) + '\n'),
+                ],
                 removeIo,
-                parts()
+                parts(main.chain)
             ),
             removeLines.join('\n')
         ).to.equal(0)
-        cfg = loadConfig(config)
-        tipOutpoint = await findTip()
+        main.cfg = loadConfig(main.config)
+        main.tipOutpoint = await findTip(main.chain, main.cfg)
+
+        // derived: a hand-written variant whose OUTH folds reading * 2
+        derived = await deploy((text) =>
+            text.replace('    outh  (', '    2 * outh  (')
+        )
+        clockBase = START
+        await pay(derived, alice, ALICE_INDEX, 1, 5000n)
+        derived.tipOutpoint = await findTip(derived.chain, derived.cfg)
     })
 
     it('--history prints the roster, readings, admin events and a verified log hash', async () => {
-        const result = await inspect([
-            tipOutpoint,
-            '--history',
-            '--config',
-            config,
-        ])
+        const result = await inspect(
+            [main.tipOutpoint, '--history', '--config', main.config],
+            main.chain
+        )
         expect(result.code, result.text).to.equal(0)
         const text = result.text
-        // roster after the removal: only Alice, paid in round 1
         expect(text).to.contain('roster (1 member):')
         expect(text).to.contain(
             `[${ALICE_INDEX}] key=${keyHash(alice.pub).slice(
@@ -243,8 +281,8 @@ describe('inspect on a tree machine', function () {
                 12
             )}.. payout=${ALICE_PAYOUT} lastRound 1`
         )
-        expect(text).to.contain('round 1 member 3 reading 5000 paid 150 sats')
-        expect(text).to.contain('round 2 member 0 reading 4242 paid 150 sats')
+        expect(text).to.contain('round 1 member 3 logged [5000] paid 150 sats')
+        expect(text).to.contain('round 2 member 0 logged [4242] paid 150 sats')
         expect(text).to.match(
             new RegExp(
                 `seq 1 admit leaf 0 key=${keyHash(bob.pub).slice(
@@ -259,28 +297,50 @@ describe('inspect on a tree machine', function () {
     })
 
     it('--history without a genesis still checks the log hash and says the roster is not shown', async () => {
-        const result = await inspect([tipOutpoint, '--history'])
+        const result = await inspect(
+            [main.tipOutpoint, '--history'],
+            main.chain
+        )
         expect(result.code, result.text).to.equal(0)
         expect(result.text).to.contain('roster: not shown')
         expect(result.text).to.contain('logHash: verified')
     })
 
-    it('--genesis works in place of --config', async () => {
-        const result = await inspect([
-            tipOutpoint,
-            '--history',
-            '--genesis',
-            cfg.genesisInscription as string,
-        ])
+    it('a program that logs a derived value (reading * 2) verifies exactly', async () => {
+        const result = await inspect(
+            [derived.tipOutpoint, '--history', '--config', derived.config],
+            derived.chain
+        )
         expect(result.code, result.text).to.equal(0)
-        expect(result.text).to.contain('roster (1 member):')
+        expect(result.text).to.contain('logged [10000]')
+        expect(result.text).to.contain('logHash: verified')
+    })
+
+    it('a cycle that cannot be replayed gives "not checked"', async () => {
+        const tipTxid = parseOutpoint(main.tipOutpoint).txid
+        const forged: TxSource = {
+            getTransaction: async (txid) => {
+                const tx = await main.chain.getTransaction(txid)
+                if (txid !== tipTxid) return tx
+                const copy = new bsv.Transaction(tx.toString())
+                // the replay expects the exact change
+                const change = copy.outputs[0] as { satoshis: number }
+                change.satoshis -= 1
+                return copy
+            },
+        }
+        const result = await inspect([main.tipOutpoint, '--history'], forged)
+        expect(result.code, result.text).to.equal(0)
+        expect(result.text).to.match(
+            /logHash: not checked \(cycle [0-9a-f]{64} could not be replayed\)/
+        )
     })
 
     it('a changed log hash prints mismatch and exits 1', async () => {
-        const tipTxid = parseOutpoint(tipOutpoint).txid
+        const tipTxid = parseOutpoint(main.tipOutpoint).txid
         const forged: TxSource = {
             getTransaction: async (txid) => {
-                const tx = await chain.getTransaction(txid)
+                const tx = await main.chain.getTransaction(txid)
                 if (txid !== tipTxid) return tx
                 const copy = new bsv.Transaction(tx.toString())
                 const machine = decodeInstance(copy.outputs[0].script.toHex())
@@ -291,19 +351,69 @@ describe('inspect on a tree machine', function () {
             },
         }
         const result = await inspect(
-            [tipTxid + ':0', '--history', '--config', config],
+            [tipTxid + ':0', '--history', '--config', main.config],
             forged
         )
         expect(result.code, result.text).to.equal(1)
         expect(result.text).to.contain('logHash: mismatch')
     })
 
+    it('--genesis wins over the genesis fields of the config', async () => {
+        // The config names a wrong inscription; --genesis gives the right one.
+        const wrong = file(
+            readFileSync(main.config, 'utf8').replace(
+                /genesis_inscription = "[^"]*"/,
+                `genesis_inscription = "${'ab'.repeat(32)}:0"`
+            )
+        )
+        const failing = await inspect(
+            [main.tipOutpoint, '--config', wrong],
+            main.chain
+        )
+        expect(failing.code).to.equal(1)
+        const result = await inspect(
+            [
+                main.tipOutpoint,
+                '--config',
+                wrong,
+                '--genesis',
+                main.cfg.genesisInscription as string,
+            ],
+            main.chain
+        )
+        expect(result.code, result.text).to.equal(0)
+        expect(result.text).to.contain('tree: 1 members')
+    })
+
+    it('a genesis of another machine fails with a clear message', async () => {
+        const err: string[] = []
+        const code = await inspectCommand(
+            [
+                main.tipOutpoint,
+                '--genesis',
+                derived.cfg.genesisInscription as string,
+            ],
+            { out() {}, err: (line: string) => err.push(line) },
+            // one chain that holds both machines
+            {
+                getTransaction: async (txid) =>
+                    main.chain.txs.get(txid) ??
+                    derived.chain.getTransaction(txid),
+            }
+        )
+        expect(code).to.equal(1)
+        expect(err.join('\n')).to.contain('another machine')
+    })
+
     it('plain inspect prints root, seq, sponsor and member count', async () => {
-        const result = await inspect([tipOutpoint, '--config', config])
+        const result = await inspect(
+            [main.tipOutpoint, '--config', main.config],
+            main.chain
+        )
         expect(result.code, result.text).to.equal(0)
         const tip = decodeInstance(
-            chain.txs
-                .get(parseOutpoint(tipOutpoint).txid)!
+            main.chain.txs
+                .get(parseOutpoint(main.tipOutpoint).txid)!
                 .outputs[0].script.toHex()
         ).instance as K17Machine
         expect(result.text).to.contain(
@@ -317,23 +427,20 @@ describe('inspect on a tree machine', function () {
     })
 
     it('plain inspect without a genesis shows the state and no member count', async () => {
-        const result = await inspect([tipOutpoint])
+        const result = await inspect([main.tipOutpoint], main.chain)
         expect(result.code, result.text).to.equal(0)
         expect(result.text).to.contain('tree: roster root')
         expect(result.text).to.contain('tree: members not shown')
     })
 
-    it('--json carries the tree report', async () => {
-        const result = await inspect([
-            tipOutpoint,
-            '--history',
-            '--json',
-            '--config',
-            config,
-        ])
+    it('--json carries the tree report and the log-hash check', async () => {
+        const result = await inspect(
+            [main.tipOutpoint, '--history', '--json', '--config', main.config],
+            main.chain
+        )
         expect(result.code).to.equal(0)
         const parsed = JSON.parse(result.text)
         expect(parsed.tree.readings).to.have.length(2)
-        expect(parsed.tree.logHashCheck.status).to.equal('verified')
+        expect(parsed.logHashCheck.status).to.equal('verified')
     })
 })

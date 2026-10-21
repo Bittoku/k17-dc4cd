@@ -11,12 +11,13 @@
  * state: roster root, seq, sponsor, log hash and, when the genesis
  * inscription is given (`--genesis` or `--config`), the member count. With
  * `--history` they get the roster table, every paid reading, every admission
- * and removal, and a check of the log hash against the readings.
+ * and removal.
+ * With `--history` every machine gets an exact log-hash check.
  */
 
 import { createHash } from 'crypto'
 import type { Provider } from 'scrypt-ts'
-import { HAS_OPERAND, Op, decodeLeafPre, encodeCell } from 'k17-vm'
+import { decodeLeafPre, encodeCell } from 'k17-vm'
 import { memoryCells } from './scenario'
 import type { CliIo } from './k17forth'
 import { DecodedMachine, decodeMachine } from '../chain/decode'
@@ -46,8 +47,8 @@ export interface TreeReading {
     round: number
     /** Leaf index of the member that was paid. */
     member: number
-    /** The reading value (second witness cell of the cycle). */
-    reading: bigint
+    /** The cells that the cycle folded into the log hash (OUTH), in order. */
+    logged: bigint[]
     /** Satoshis paid to the member. */
     satoshis: number
 }
@@ -73,41 +74,18 @@ export interface LogHashCheck {
 }
 
 /**
- * Count the opcodes of a program, skipping operand bytes.
- * Input: program hex. Output: opcode byte to count.
- */
-function opcodeCounts(progHex: string): Map<number, number> {
-    const counts = new Map<number, number>()
-    const bytes = Buffer.from(progHex, 'hex')
-    for (let i = 0; i < bytes.length; i++) {
-        counts.set(bytes[i], (counts.get(bytes[i]) ?? 0) + 1)
-        if (HAS_OPERAND.has(bytes[i])) i += 4
-    }
-    return counts
-}
-
-/**
- * Check the log hash of a tree machine against its paid readings.
- * The tree generator folds the reading of each paid reading cycle with one
- * OUTH, so folding those readings from 32 zero bytes must give the machine's
- * `logHash`. A program that does not have exactly one each of MEMBER,
- * ATTESTM, PAYLEAF and OUTH is not the generator's shape, and a cycle that
- * could not be replayed hides its reading; both give "not checked".
- * Input: the machine, the cycles (oldest first) and the readings. Output:
- * the check result.
+ * Check the log hash of a machine against its history.
+ * Every cycle reports the cells that OUTH folded (`DecodedCycle.logged`, from
+ * the replay), so folding them from 32 zero bytes with
+ * `logHash := sha256(logHash || cell(value))` must give the machine's
+ * `logHash`. This is exact for any program. A cycle that could not be
+ * replayed hides its cells, so the check does not run then.
+ * Input: the machine and the cycles (oldest first). Output: the check result.
  */
 export function checkLogHash(
     machine: DecodedMachine,
-    cycles: DecodedCycle[],
-    readings: TreeReading[]
+    cycles: DecodedCycle[]
 ): LogHashCheck {
-    const counts = opcodeCounts(machine.prog)
-    for (const op of [Op.MEMBER, Op.ATTESTM, Op.PAYLEAF, Op.OUTH])
-        if (counts.get(op) !== 1)
-            return {
-                status: 'not checked',
-                detail: 'program is not the tree generator',
-            }
     const hidden = cycles.find((c) => c.ambiguous)
     if (hidden)
         return {
@@ -115,22 +93,23 @@ export function checkLogHash(
             detail: `cycle ${hidden.txid} could not be replayed`,
         }
     let folded = ZERO_HASH
-    for (const { reading } of readings)
-        folded = createHash('sha256')
-            .update(Buffer.from(folded + encodeCell(reading), 'hex'))
-            .digest('hex')
+    for (const cycle of cycles)
+        for (const value of cycle.logged)
+            folded = createHash('sha256')
+                .update(Buffer.from(folded + encodeCell(value), 'hex'))
+                .digest('hex')
     return folded === machine.logHash
         ? { status: 'verified' }
         : {
               status: 'mismatch',
-              detail: `readings give ${folded}, the machine has ${machine.logHash}`,
+              detail: `history gives ${folded}, the machine has ${machine.logHash}`,
           }
 }
 
 /**
  * Paid readings, admissions and removals found in the cycles.
  * A paid reading is a MEMBER cycle that wrote a leaf; its round is the new
- * leaf's `lastRound` and its reading is the second witness cell.
+ * leaf's `lastRound` and its logged cells are what the cycle folded.
  * Input: the cycles, oldest first. Output: both lists, in cycle order.
  */
 export function treeEvents(cycles: DecodedCycle[]): {
@@ -147,7 +126,7 @@ export function treeEvents(cycles: DecodedCycle[]): {
                 txid: c.txid,
                 round: Number(decodeLeafPre(c.leafAfter).lastRound),
                 member: leaf,
-                reading: c.witness[1] ?? 0n,
+                logged: c.logged,
                 satoshis: c.payout.satoshis,
             })
         else if (c.treeOp === 'admit' && c.leafAfter) {
@@ -309,7 +288,7 @@ async function deploymentOf(
  * transaction source (default: the chain provider of `--network`, testnet if
  * not given). Output: exit code: 0 on success, 1 when the output is not a
  * machine, the chain cannot be read, the roster does not load, or the log
- * hash of a tree machine does not match its readings; 2 on wrong arguments.
+ * hash does not match the history; 2 on wrong arguments.
  */
 export async function inspectCommand(
     args: string[],
@@ -318,7 +297,7 @@ export async function inspectCommand(
 ): Promise<number> {
     const json = args.includes('--json')
     const history = args.includes('--history')
-    let network: NetworkName = 'testnet'
+    let network: NetworkName | undefined
     let genesisArg: string | undefined
     let configPath: string | undefined
     const positional: string[] = []
@@ -356,8 +335,13 @@ export async function inspectCommand(
         return 2
     }
     try {
+        // The config gives the network unless --network was given.
+        const saved = configPath ? loadConfig(configPath) : undefined
         const chain: TxSource =
-            source ?? (makeProvider(network, { readAttempts: 2 }) as Provider)
+            source ??
+            (makeProvider(network ?? saved?.network ?? 'testnet', {
+                readAttempts: 2,
+            }) as Provider)
         const tx = await chain.getTransaction(outpoint.txid)
         const output = tx.outputs[outpoint.vout]
         if (!output) {
@@ -378,10 +362,10 @@ export async function inspectCommand(
                 : undefined
         let mirror: RosterMirror | undefined
         if (isTree && (genesisArg || configPath)) {
-            const saved = configPath ? loadConfig(configPath) : undefined
-            const genesisInscription = saved?.genesisInscription ?? genesisArg
+            // An explicit --genesis wins over both genesis fields of the config.
+            const genesisInscription = genesisArg ?? saved?.genesisInscription
             const genesisOutpoint =
-                saved?.genesisOutpoint ??
+                (genesisArg ? undefined : saved?.genesisOutpoint) ??
                 (await deploymentOf(chain, cycles ?? [], positional[0]))
             mirror = (
                 await loadRoster(
@@ -396,9 +380,7 @@ export async function inspectCommand(
         }
         const events = isTree && history ? treeEvents(cycles ?? []) : undefined
         const logCheck =
-            events && cycles
-                ? checkLogHash(machine, cycles, events.readings)
-                : undefined
+            history && cycles ? checkLogHash(machine, cycles) : undefined
         const exitCode = logCheck?.status === 'mismatch' ? 1 : 0
         if (json) {
             io.out(
@@ -407,14 +389,9 @@ export async function inspectCommand(
                     satoshis: output.satoshis,
                     machine,
                     ...(cycles && history ? { history: cycles } : {}),
+                    ...(logCheck ? { logHashCheck: logCheck } : {}),
                     ...(isTree
-                        ? {
-                              tree: {
-                                  members: mirror?.members(),
-                                  ...events,
-                                  logHashCheck: logCheck,
-                              },
-                          }
+                        ? { tree: { members: mirror?.members(), ...events } }
                         : {}),
                 })
             )
@@ -430,7 +407,7 @@ export async function inspectCommand(
             io.out(`history (${cycles.length} cycles, oldest first):`)
             for (const cycle of cycles) io.out('  ' + cycleLine(cycle))
         }
-        if (events && logCheck) {
+        if (events) {
             if (mirror) for (const line of rosterLines(mirror)) io.out(line)
             else
                 io.out(
@@ -439,7 +416,11 @@ export async function inspectCommand(
             io.out(`readings (${events.readings.length}):`)
             for (const r of events.readings)
                 io.out(
-                    `  round ${r.round} member ${r.member} reading ${r.reading} paid ${r.satoshis} sats (${r.txid})`
+                    `  round ${r.round} member ${
+                        r.member
+                    } logged [${r.logged.join(' ')}] paid ${r.satoshis} sats (${
+                        r.txid
+                    })`
                 )
             io.out(`admissions and removals (${events.admin.length}):`)
             for (const a of events.admin)
@@ -452,11 +433,12 @@ export async function inspectCommand(
                           } (${a.txid})`
                         : `  seq ${a.seq} remove leaf ${a.leaf} (${a.txid})`
                 )
+        }
+        if (logCheck)
             io.out(
                 `logHash: ${logCheck.status}` +
                     (logCheck.detail ? ` (${logCheck.detail})` : '')
             )
-        }
         return exitCode
     } catch (e) {
         io.err(`inspect: ${(e as Error).message}`)

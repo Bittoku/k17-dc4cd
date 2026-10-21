@@ -437,11 +437,11 @@ k17forth inspect <tip outpoint> --history --config sponsor.toml
 The output lists:
 
 - the roster: leaf index, the first 12 hex characters of the key hash, the payout hash and `lastRound`;
-- every paid reading: round, member leaf, reading value and satoshis;
+- every paid reading: round, member leaf, the cells it logged and satoshis;
 - every admission and removal, with the roster seq after it;
-- `logHash: verified` when folding the paid readings gives the log hash of the machine.
+- `logHash: verified` when folding the logged cells of all cycles gives the log hash of the machine.
 
-The machine folds each paid reading into its log hash: `logHash := sha256(logHash || cell(reading))`, from 32 zero bytes. `inspect` repeats this from the history. When the result differs from the machine, it prints `logHash: mismatch` and exits with code 1. It prints `logHash: not checked` when the program is not the tree generator, or when a cycle could not be replayed. `inspect` also exits with an error when the history does not rebuild the roster root and seq of the machine.
+The machine folds each value that OUTH logs into its log hash: `logHash := sha256(logHash || cell(value))`, from 32 zero bytes. `inspect` replays every cycle, takes the cells that OUTH folded and repeats the fold. This is exact for any program, not only the generated one. When the result differs from the machine, it prints `logHash: mismatch` and exits with code 1. It prints `logHash: not checked` only when a cycle could not be replayed. `inspect` also exits with an error when the history does not rebuild the roster root and seq of the machine. If you give both `--genesis` and `--config`, the `--genesis` inscription is used; the config supplies the network unless you pass `--network`.
 
 ## Before you go to mainnet
 

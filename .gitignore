@@ -18,3 +18,5 @@ gateways/
 
 # live rehearsal configs, keys and state (spikes/tree-rehearsal.ts)
 spikes/tree-rehearsal/
+spikes/tree-rehearsal.log
+spikes/tree-rehearsal.stdout

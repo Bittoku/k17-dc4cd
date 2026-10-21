@@ -15,3 +15,6 @@ tsconfig-scryptTS.json
 *.toml
 gateways/
 .superpowers/
+
+# live rehearsal configs, keys and state (spikes/tree-rehearsal.ts)
+spikes/tree-rehearsal/

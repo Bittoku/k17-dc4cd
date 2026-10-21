@@ -111,6 +111,8 @@ export interface GatewayConfig {
     consortium?: ConsortiumSettings
     /** `[gateway] mode`: undefined means "slots". */
     mode?: GatewayMode
+    /** False when the file has no `[gateway]` table (a sponsor config): `describeConfig` then omits the mode. */
+    hasGatewaySection?: boolean
     /** Settings of the tree-mode machine (`[consortium]`); tree mode only. */
     tree?: TreeSettings
 }
@@ -335,6 +337,7 @@ export function loadConfig(path: string): GatewayConfig {
         slot: slot as number | undefined,
         signAnyway: signAnyway === true,
         mode: gatewayMode,
+        hasGatewaySection: Object.keys(gateway).length > 0,
         consortium:
             gatewayMode === 'slots' ? consortiumSettings(doc) : undefined,
         tree: gatewayMode === 'tree' ? treeSettings(doc) : undefined,
@@ -358,7 +361,9 @@ export function describeConfig(cfg: GatewayConfig): string {
         `machine=${cfg.machineOutpoint ?? 'not set'}`,
         `slot=${cfg.slot ?? 'not set'}`,
         `sign_anyway=${cfg.signAnyway}`,
-        `mode=${cfg.mode ?? 'slots'}`,
+        ...(cfg.hasGatewaySection === false
+            ? []
+            : [`mode=${cfg.mode ?? 'slots'}`]),
         `consortium=${
             cfg.tree ?? cfg.consortium
                 ? `start:${(cfg.tree ?? cfg.consortium)!.start},period:${
@@ -414,7 +419,11 @@ export function withTableEntries(
  * `[machine]` keys that belong to one machine's run (not to the config):
  * a new machine removes the old value.
  */
-const PER_MACHINE_KEYS = ['tip_outpoint']
+const PER_MACHINE_KEYS = [
+    'tip_outpoint',
+    'genesis_inscription',
+    'genesis_outpoint',
+]
 
 /**
  * Set `[machine] outpoint` and `instance_id` in the text of a config file.

@@ -21,7 +21,12 @@ import {
     pubKeyBytes,
     signMemberReading,
 } from 'k17-vm'
-import { GatewayConfig, loadConfig, saveAttesterKey } from '../src/chain/config'
+import {
+    GatewayConfig,
+    loadConfig,
+    saveAttesterKey,
+    writeTableEntries,
+} from '../src/chain/config'
 import { loadRoster } from '../src/chain/loadRoster'
 import { GenesisRoster } from '../src/chain/roster'
 import { admitCommand, removeCommand } from '../src/cli/admit'
@@ -64,7 +69,8 @@ const outsider = newAttester(Buffer.alloc(32, 83))
 
 const ALICE_INDEX = 3
 const BOB_INDEX = 5
-const ALICE_PAYOUT = 'a1'.repeat(20)
+const ALICE_ADDRESS = bsv.PrivateKey.fromRandom('testnet').toAddress()
+const ALICE_PAYOUT = payoutOf(ALICE_ADDRESS)
 const BOB_PAYOUT = payoutOf(PAYOUT_ADDRESS)
 
 /** Genesis members: Alice at leaf 3 and Bob at leaf 5, neither paid yet. */
@@ -139,7 +145,10 @@ describe('gateway: tree mode', function () {
     }
 
     /** Deploy a tree machine; output: the chain and the deployer's config path. */
-    async function deployTree(): Promise<{ chain: HookChain; config: string }> {
+    async function deployTree(
+        treeSource: string = source,
+        extraArgs: string[] = []
+    ): Promise<{ chain: HookChain; config: string }> {
         const chain = new HookChain()
         const config = file(
             `[network]\nname = "testnet"\n[wallet]\nwif = "${WALLET_KEY.toWIF()}"\n`
@@ -148,7 +157,7 @@ describe('gateway: tree mode', function () {
         const { lines, io } = sink()
         const code = await deployCommand(
             [
-                source,
+                treeSource,
                 '--config',
                 config,
                 '--deposit',
@@ -163,6 +172,7 @@ describe('gateway: tree mode', function () {
                 members,
                 '--sponsor',
                 keyHash(sponsorKey.pub),
+                ...extraArgs,
             ],
             io,
             {
@@ -183,15 +193,28 @@ describe('gateway: tree mode', function () {
     function memberConfig(
         deployed: string,
         key: { priv: { p: bigint; q: bigint } },
-        gatewayExtra = ''
+        gatewayExtra = '',
+        options: { payout?: bsv.Address; rounds?: number } = {}
     ): string {
         const path = file(readFileSync(deployed, 'utf8'))
         saveAttesterKey(path, key.priv.p, key.priv.q)
+        // The payout address of the key's leaf (a gateway checks it).
+        writeTableEntries(path, 'attester', [
+            [
+                'payout_address',
+                (
+                    options.payout ??
+                    (key === alice ? ALICE_ADDRESS : PAYOUT_ADDRESS)
+                ).toString(),
+            ],
+        ])
         writeFileSync(
             path,
             readFileSync(path, 'utf8') +
                 `[gateway]\nmode = "tree"\n${gatewayExtra}` +
-                `[consortium]\nstart = ${START}\nperiod = ${PERIOD}\nrounds = ${ROUNDS}\n` +
+                `[consortium]\nstart = ${START}\nperiod = ${PERIOD}\nrounds = ${
+                    options.rounds ?? ROUNDS
+                }\n` +
                 'range_min = 4000\nrange_max = 6000\n'
         )
         chmodSync(path, 0o600)
@@ -617,6 +640,97 @@ describe('gateway: tree mode', function () {
         expect(lines.join('\n')).to.contain('waiting for MTP')
         expect(gateway.pendingReading).to.equal(undefined)
         expect(chain.cycleBroadcasts).to.equal(sent)
+    })
+
+    it('refuses at start and before a relay when the leaf pays another address', async () => {
+        const { chain, config } = await deployTree()
+        // Alice's leaf pays ALICE_ADDRESS; this config pays elsewhere.
+        const path = memberConfig(config, alice, '', {
+            payout: PAYOUT_ADDRESS,
+        })
+        const before = chain.cycleBroadcasts
+        const started = sink()
+        const code = await gatewayCommand(
+            ['run', '--config', path],
+            started.io,
+            {
+                provider: chain,
+                signer: new TestWallet(WALLET_KEY, chain),
+                keeper: keeperOptions(chain),
+                now: clockOf(chain),
+                bridge: emptyBridge(),
+            }
+        )
+        expect(code).to.equal(NOT_IN_ROSTER)
+        expect(started.lines.join('\n')).to.contain(
+            "payout is not this gateway's payout address"
+        )
+        // The reading path refuses on its own, too.
+        const { gateway } = gatewayOf(chain, path)
+        const line = await gateway.handleReading(5000)
+        expect(line).to.contain('refused')
+        expect(line).to.contain("payout is not this gateway's payout address")
+        expect(chain.cycleBroadcasts).to.equal(before)
+    })
+
+    it('does not relay against the last known tip when the sync fails', async () => {
+        const { chain, config } = await deployTree()
+        const path = memberConfig(config, alice)
+        let lookupDown = true
+        const options = keeperOptions(chain)
+        const gateway = new Gateway(
+            loadConfig(path),
+            chain,
+            new TestWallet(WALLET_KEY, chain),
+            {
+                bridge: emptyBridge(),
+                keeper: {
+                    ...options,
+                    spentBy: async (op) => {
+                        if (lookupDown) throw new Error('lookup down')
+                        return options.spentBy(op)
+                    },
+                },
+                now: clockOf(chain),
+                intervalMs: 20,
+                out: () => undefined,
+                configPath: path,
+            }
+        )
+        const kept = await gateway.handleReading(5000)
+        expect(kept).to.contain('kept')
+        expect(kept).to.contain('could not check the roster')
+        expect(gateway.pendingReading).to.equal(5000)
+        expect(chain.cycleBroadcasts).to.equal(0)
+        lookupDown = false
+        expect(await gateway.tickIdle()).to.contain('delivered 1')
+        expect(chain.cycleBroadcasts).to.equal(1)
+    })
+
+    it('run --once: a carrying cycle that halts (dead-man) exits NOT_DELIVERED, member unpaid', async () => {
+        const longSource = join(dir, `long-${counter++}.fs`)
+        writeFileSync(
+            longSource,
+            treeConsortiumSource({ ...OPTS, rounds: 100 })
+        )
+        const { chain, config } = await deployTree(longSource, [
+            '--dead-man',
+            '21600',
+        ])
+        // The clock is past the dead-man interval: the next cycle halts.
+        clockBase = T0 + 22_000
+        const { gateway, lines } = gatewayOf(
+            chain,
+            memberConfig(config, alice, '', { rounds: 100 }),
+            undefined,
+            { reading: 5000 }
+        )
+        const code = await gateway.run()
+        const text = lines.join('\n')
+        expect(code, text).to.equal(NOT_DELIVERED)
+        expect(text).to.contain('machine halted')
+        expect(text).to.contain('not paid')
+        expect(text).to.not.contain('delivered 1')
     })
 
     it('refuses a reading out of range and sends nothing', async () => {

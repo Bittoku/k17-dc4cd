@@ -17,7 +17,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { TestWallet, bsv } from 'scrypt-ts'
 import { K17Machine } from 'k17-vm'
-import { loadConfig } from '../src/chain/config'
+import { describeConfig, loadConfig } from '../src/chain/config'
 import { inscriptionScript, parseInscription } from '../src/chain/inscription'
 import { GenesisRoster, RosterMirror } from '../src/chain/roster'
 import { deployCommand } from '../src/cli/deploy'
@@ -54,6 +54,61 @@ function membersOf(count: number): GenesisRoster['members'] {
         payout: (i + 1).toString(16).padStart(40, 'b'),
         lastRound: 0,
     }))
+}
+
+/**
+ * Chain whose coin listing lags: it always lists the same wallet coin, as an
+ * indexer does that has not yet seen the deploy spend it. `conflictOnce`
+ * makes the first inscription broadcast fail with a mempool conflict.
+ */
+class LaggingChain extends MemoryChain {
+    conflictOnce = false
+    inscriptionAttempts = 0
+    /** The coins the deploy spent; once set, the listing shows only these. */
+    stale: {
+        txId: string
+        outputIndex: number
+        script: string
+        satoshis: number
+    }[] = []
+    spentOutpoints: string[] = []
+
+    async listUnspent(
+        address: bsv.Address,
+        options?: Parameters<MemoryChain['listUnspent']>[1]
+    ) {
+        if (this.stale.length > 0)
+            return this.stale.map((coin) => ({
+                ...coin,
+                script: bsv.Script.fromAddress(address).toHex(),
+            }))
+        return super.listUnspent(address, options)
+    }
+
+    async sendRawTransaction(rawTxHex: string): Promise<string> {
+        const tx = new bsv.Transaction(rawTxHex)
+        if (tx.outputs[0].satoshis === 1) {
+            this.inscriptionAttempts++
+            if (this.conflictOnce && this.inscriptionAttempts === 1)
+                throw new Error('258: txn-mempool-conflict')
+        } else {
+            // The deploy: the indexer keeps listing what it spent.
+            this.spentOutpoints.push(
+                ...tx.inputs.map(
+                    (i) => `${i.prevTxId.toString('hex')}:${i.outputIndex}`
+                )
+            )
+            this.stale = this.stale.concat(
+                tx.inputs.map((i) => ({
+                    txId: i.prevTxId.toString('hex'),
+                    outputIndex: i.outputIndex,
+                    script: '',
+                    satoshis: 9_999_999_999,
+                }))
+            )
+        }
+        return super.sendRawTransaction(rawTxHex)
+    }
 }
 
 describe('deploy --tree and inscribe-genesis', function () {
@@ -183,6 +238,117 @@ describe('deploy --tree and inscribe-genesis', function () {
         )
         expect(readFileSync(config, 'utf8')).to.contain('# sponsor config')
         expect(lines.join('\n')).to.not.contain(WALLET_KEY.toWIF())
+    })
+
+    it('funds the inscription from the deploy change when the listing still shows the spent coins', async () => {
+        const chain = new LaggingChain()
+        const config = configFile()
+        const list = membersFile(membersOf(4))
+        const { lines, io } = sink()
+        const code = await deployCommand(
+            args(treeSource, config, [
+                '--tree',
+                list,
+                '--sponsor',
+                SPONSOR_HASH,
+            ]),
+            io,
+            { ...parts(chain), inscriptionPauseMs: 0 }
+        )
+        expect(lines.join('\n')).to.not.contain('failed')
+        expect(code).to.equal(0)
+        const cfg = loadConfig(config)
+        const [inscriptionTxid] = cfg.genesisInscription!.split(':')
+        expect(chain.spentOutpoints).to.have.length.greaterThan(0)
+        const inscriptionOutpoints = chain.txs
+            .get(inscriptionTxid)!
+            .inputs.map((i) => `${i.prevTxId.toString('hex')}:${i.outputIndex}`)
+        for (const spent of chain.spentOutpoints)
+            expect(inscriptionOutpoints).to.not.include(spent)
+        expect(chain.inscriptionAttempts).to.equal(1)
+    })
+
+    it('retries the inscription once after a mempool conflict', async () => {
+        const chain = new LaggingChain()
+        chain.conflictOnce = true
+        const config = configFile()
+        const retried = sink()
+        const code = await deployCommand(
+            args(treeSource, config, [
+                '--tree',
+                membersFile(membersOf(4)),
+                '--sponsor',
+                SPONSOR_HASH,
+            ]),
+            retried.io,
+            { ...parts(chain), inscriptionPauseMs: 0 }
+        )
+        expect(code, retried.lines.join('\n')).to.equal(0)
+        expect(chain.inscriptionAttempts).to.equal(2)
+        expect(loadConfig(config).genesisInscription).to.match(
+            /^[0-9a-f]{64}:0$/
+        )
+    })
+
+    it('a redeploy clears the old genesis fields; inscribe-genesis then succeeds', async () => {
+        const chain = new FlakyChain()
+        const config = configFile()
+        const list = membersFile(membersOf(4))
+        const deployArgs = args(treeSource, config, [
+            '--tree',
+            list,
+            '--sponsor',
+            SPONSOR_HASH,
+        ])
+        expect(
+            await deployCommand(deployArgs, sink().io, parts(chain))
+        ).to.equal(0)
+        const first = loadConfig(config)
+        expect(first.genesisInscription).to.be.a('string')
+
+        chain.failInscription = true
+        expect(
+            await deployCommand(deployArgs, sink().io, parts(chain))
+        ).to.equal(1)
+        const second = loadConfig(config)
+        expect(second.machineOutpoint).to.not.equal(first.machineOutpoint)
+        expect(second.genesisOutpoint).to.equal(second.machineOutpoint)
+        expect(second.genesisInscription).to.equal(undefined)
+
+        chain.failInscription = false
+        expect(
+            await inscribeGenesisCommand([config, '--tree', list], sink().io, {
+                provider: chain,
+                signer: new TestWallet(WALLET_KEY, chain),
+            })
+        ).to.equal(0)
+        expect(loadConfig(config).genesisInscription).to.not.equal(
+            first.genesisInscription
+        )
+
+        // a plain redeploy also drops the old genesis outpoint
+        expect(
+            await deployCommand(
+                args(plainSource, config),
+                sink().io,
+                parts(chain)
+            )
+        ).to.equal(0)
+        const plain = loadConfig(config)
+        expect(plain.genesisOutpoint).to.equal(undefined)
+        expect(plain.genesisInscription).to.equal(undefined)
+    })
+
+    it('describeConfig names the mode only for a config with a [gateway] table', () => {
+        const sponsor = loadConfig(configFile())
+        expect(describeConfig(sponsor)).to.not.contain('mode=')
+        const path = join(dir, `gw-${counter++}.toml`)
+        writeFileSync(
+            path,
+            `[network]\nname = "testnet"\n[wallet]\nwif = "${WALLET_KEY.toWIF()}"\n[gateway]\nslot = 0\n`
+        )
+        chmodSync(path, 0o600)
+        expect(describeConfig(loadConfig(path))).to.contain('mode=slots')
     })
 
     it('a 100-member body (over 520 bytes) round-trips through the chain', async () => {

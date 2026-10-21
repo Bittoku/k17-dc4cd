@@ -172,6 +172,10 @@ const TREE_ATTEMPTS = 2
 /** Exit code of `run` with `once` when no reading was delivered. */
 export const NOT_DELIVERED = 3
 
+/** Refusal text of a tree gateway whose leaf pays an address that is not its own. */
+const LEAF_PAYOUT_MISMATCH =
+    "the roster leaf's payout is not this gateway's payout address; relaying nothing (ask the sponsor to admit the key with this payout)"
+
 /** Relays the readings of one slot into one consortium machine. */
 export class Gateway {
     private readonly keeper: Keeper
@@ -554,6 +558,8 @@ export class Gateway {
             this.leafPayout = decodeLeafPre(
                 mirror.proofFor(index).leafPre
             ).payoutHex
+            if (this.leafPayout.toLowerCase() !== member.payoutHex)
+                return `gateway: ${LEAF_PAYOUT_MISMATCH}`
         } catch (e) {
             this.out(
                 hideSecrets(
@@ -619,10 +625,11 @@ export class Gateway {
             }
             const { mirror, machine, note: syncNote } = fresh
             const index = mirror.indexOf(member.keyHashHex)
-            if (index === undefined && syncNote) {
+            if (syncNote) {
                 // The roster is from the last known tip, which may be older
-                // than this gateway's admission: only a successful sync can
-                // conclude that the key is not a member.
+                // than the chain: only a successful sync can conclude that
+                // the key is not a member, and a proof against an old root
+                // must never be relayed.
                 this.unsigned = reading
                 return this.status(
                     round,
@@ -638,6 +645,11 @@ export class Gateway {
             const proof = mirror.proofFor(index)
             const leaf = decodeLeafPre(proof.leafPre)
             this.leafPayout = leaf.payoutHex
+            if (leaf.payoutHex.toLowerCase() !== member.payoutHex)
+                return this.status(
+                    round,
+                    `reading ${reading} refused: ${LEAF_PAYOUT_MISMATCH}`
+                )
             if (round < 1)
                 return this.status(
                     round,
@@ -673,7 +685,9 @@ export class Gateway {
             if (result.halted) this.halted = true
             if (result.txid) {
                 this.latest = this.keeper.outpoint ?? `${result.txid}:0`
-                this.treeDelivered = true
+                // A halting cycle (dead-man, or a bounty the machine cannot
+                // pay) refunds the beneficiary: the member was not paid.
+                this.treeDelivered = !result.halted
                 let saved = ''
                 if (this.configPath && result.outpoint)
                     try {
@@ -685,7 +699,13 @@ export class Gateway {
                     }
                 return this.status(
                     signed.round,
-                    tickLine(result) + stale + syncNote + saved
+                    tickLine(result) +
+                        (result.halted
+                            ? ` (machine halted, reading ${reading} not paid)`
+                            : '') +
+                        stale +
+                        syncNote +
+                        saved
                 )
             }
             const rejected = /witness rejected/.test(result.error ?? '')

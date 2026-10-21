@@ -79,8 +79,18 @@ const GENESIS_MEMBERS: GenesisRoster['members'] = [
 /** A chain that runs one hook before the next broadcast that spends the machine. */
 class HookChain extends MemoryChain {
     before?: () => Promise<void>
+    /** When set, the next machine spend is accepted, then answered with a conflict error. */
+    acceptThenConflict = false
 
     async sendRawTransaction(rawTxHex: string): Promise<string> {
+        if (this.acceptThenConflict) {
+            const spend = new bsv.Transaction(rawTxHex)
+            if (spend.inputs.some((input) => this.spendsMachine(input))) {
+                this.acceptThenConflict = false
+                await super.sendRawTransaction(rawTxHex)
+                throw new Error('258: txn-mempool-conflict')
+            }
+        }
         if (this.before) {
             const tx = new bsv.Transaction(rawTxHex)
             if (tx.inputs.some((input) => this.spendsMachine(input))) {
@@ -817,6 +827,38 @@ describe('sponsor admit and remove', function () {
         expect(loadConfig(config).tipOutpoint).to.equal(
             await tipOutpoint(chain, cfg)
         )
+    })
+
+    it('reports success when the cycle landed although the broadcast came back as a conflict', async () => {
+        const { chain, config, cfg } = await deployTree()
+        chain.acceptThenConflict = true
+        const admitted = await run(
+            admitCommand,
+            [
+                config,
+                '--member-key',
+                hexKeyFile(carol.pub),
+                '--payout',
+                PAYOUT_ADDRESS.toString(),
+                '--index',
+                '9',
+            ],
+            chain
+        )
+        expect(admitted.code, admitted.text).to.equal(0)
+        expect(admitted.text).to.contain('landed')
+        expect((await tipOf(chain, cfg)).rosterSeq).to.equal(1n)
+
+        chain.acceptThenConflict = true
+        const removed = await run(
+            removeCommand,
+            [config, '--member-key', hexKeyFile(carol.pub)],
+            chain
+        )
+        expect(removed.code, removed.text).to.equal(0)
+        expect(removed.text).to.contain('landed')
+        expect((await tipOf(chain, cfg)).rosterSeq).to.equal(2n)
+        expect(removed.text).to.not.contain('in the roster already')
     })
 
     it('a removal by leaf index is refused when the leaf holds another member on the retry', async () => {

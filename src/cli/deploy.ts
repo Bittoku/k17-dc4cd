@@ -45,6 +45,7 @@ import {
 import {
     GENESIS_CONTENT_TYPE,
     broadcastInscription,
+    priorSpendOf,
     genesisRosterOf,
     readMembersFile,
 } from '../chain/inscription'
@@ -76,6 +77,31 @@ export interface DeployDeps {
     chainInfo?: () => Promise<ChainInfo>
     /** Wall clock, unix seconds. Default: the system clock. */
     now?: () => number
+    /** Wait before the single retry of the genesis inscription, ms. Default 3000. */
+    inscriptionPauseMs?: number
+}
+
+/**
+ * The deploy transaction and the transactions that funded it.
+ * Input: the signer and the deploy transaction. Output: the transaction
+ * and, when the provider can give them, the transactions that created its
+ * inputs (the wallet may split a coin first). A parent that cannot be read
+ * is left out: the inscription then falls back to the coin listing.
+ */
+async function fundingChainOf(
+    signer: Signer,
+    tx: bsv.Transaction
+): Promise<bsv.Transaction[]> {
+    const parents: bsv.Transaction[] = []
+    for (const txid of new Set(
+        tx.inputs.map((input) => input.prevTxId.toString('hex'))
+    ))
+        try {
+            parents.push(await signer.connectedProvider.getTransaction(txid))
+        } catch {
+            // best effort
+        }
+    return [tx, ...parents]
 }
 
 /** An error in the arguments: exit code 2. */
@@ -322,7 +348,12 @@ export async function deployCommand(
             inscription = await broadcastInscription(
                 signer,
                 GENESIS_CONTENT_TYPE,
-                Buffer.from(JSON.stringify(genesis), 'utf8')
+                Buffer.from(JSON.stringify(genesis), 'utf8'),
+                priorSpendOf(
+                    await fundingChainOf(signer, tx),
+                    await signer.getDefaultAddress()
+                ),
+                deps.inscriptionPauseMs
             )
         } catch (e) {
             io.err(

@@ -10,7 +10,14 @@
  * run on the same state must do nothing; no log or summary may hold a secret.
  */
 import { expect } from 'chai'
-import { mkdtempSync, readFileSync, statSync, existsSync } from 'fs'
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { TestWallet, bsv } from 'scrypt-ts'
@@ -163,6 +170,59 @@ describe('tree rehearsal driver', function () {
         ]
         for (const secret of secrets) expect(texts).to.not.contain(secret)
         expect(existsSync(join(dir, 'work', 'gateway-C.pub'))).to.equal(true)
+
+        // The gateway wallets were swept back to the funding address.
+        expect(Object.keys(state.swept ?? {}).sort()).to.deep.equal([
+            'A',
+            'B',
+            'C',
+        ])
+        for (const name of GATEWAYS) {
+            const txid = state.swept![name]
+            expect(txid, `sweep of ${name}`).to.match(/^[0-9a-f]{64}$/)
+            const outputs = chain.txs.get(txid)!.outputs
+            expect(outputs.length).to.be.greaterThan(0)
+            for (const output of outputs)
+                expect(output.script.toAddress('testnet').toString()).to.equal(
+                    fundingKey.toAddress().toString()
+                )
+            expect(log).to.contain(`SWEEP ${name}:`)
+        }
+        expect(summary.swept).to.deep.equal(state.swept)
+    })
+
+    it('a resume that finds a deploy marker and a fallen balance stops before deploying', async () => {
+        const marked = mkdtempSync(join(tmpdir(), 'k17rehearsal-marker-'))
+        // An earlier run saved the deploy marker and was cut off.
+        mkdirSync(join(marked, 'work'), { recursive: true })
+        writeFileSync(
+            join(marked, 'work', 'state.json'),
+            JSON.stringify({
+                version: 1,
+                network: 'testnet',
+                createdAt: tip.mtp,
+                delivered: {},
+                refusals: [],
+                missed: [],
+                cycles: [],
+                deployPending: { balance: 1_000_000 },
+            })
+        )
+        const cyclesBefore = chain.cycleBroadcasts
+        // The balance has fallen by more than half the deposit: no second deploy.
+        balance = 1_000_000 - 6_000
+        const code = await runRehearsal(depsOf(marked))
+        balance = 1_000_000
+        expect(code).to.equal(1)
+        // setup may fund the gateways; the deploy must not happen.
+        expect(
+            JSON.parse(readFileSync(join(marked, 'work', 'state.json'), 'utf8'))
+                .deployed
+        ).to.equal(undefined)
+        expect(chain.cycleBroadcasts).to.equal(cyclesBefore)
+        expect(readFileSync(join(marked, 'rehearsal.log'), 'utf8')).to.contain(
+            'earlier run started the deploy'
+        )
     })
 
     it('a second run on the same state does nothing', async () => {

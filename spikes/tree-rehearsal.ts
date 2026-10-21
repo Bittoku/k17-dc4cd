@@ -15,7 +15,8 @@
  *      relay and B must be refused;
  *   4. after END a keeper tick halts the machine and refunds the sponsor;
  *      `inspect --history` must show `logHash: verified`, the expected paid
- *      readings and the two roster events (admit C, remove B).
+ *      readings and the two roster events (admit C, remove B);
+ *   5. the gateway wallets are swept back to the funding address (logged).
  *
  * State is kept in `state.json` next to the configs, so a run that stops can
  * be started again with the same command and goes on where it was. The log
@@ -161,6 +162,12 @@ export interface RehearsalState {
     fundingBefore?: number
     deposit?: number
     funded?: string
+    /** The funding transaction, kept before it is sent so a resume can check the chain first. */
+    pendingFund?: { txid: string; raw: string }
+    /** Set before `deploy` broadcasts: the funding balance then. */
+    deployPending?: { balance: number }
+    /** Sweep of each gateway wallet back to the funding address (txid, or 'nothing'). */
+    swept?: Record<string, string>
     deployed?: boolean
     inscribed?: boolean
     genesisChecked?: boolean
@@ -505,6 +512,7 @@ class Rehearsal {
             await this.rounds()
             await this.finish()
             await this.verify()
+            await this.sweep()
             this.writeSummary(true)
             this.log('=== tree rehearsal PASSED ===')
             return 0
@@ -629,11 +637,32 @@ class Rehearsal {
         }
     }
 
-    /** One transaction from the funding wallet pays the three gateway wallets. */
+    /**
+     * One transaction from the funding wallet pays the three gateway wallets.
+     * The signed transaction is saved before it is sent. A resume finds it on
+     * the chain, or sends the very same bytes again (never a second funding).
+     */
     private async fund(): Promise<void> {
         if (this.state.funded) return
         const sponsor = this.config('sponsor')
         const signer = this.d.signerFor(sponsor)
+        if (this.state.pendingFund) {
+            const { txid, raw } = this.state.pendingFund
+            const seen = await this.d.provider
+                .getTransaction(txid)
+                .then(() => true)
+                .catch(() => false)
+            if (!seen)
+                await this.d.provider.sendRawTransaction(raw).catch((e) => {
+                    // "already known" means a previous run's send went through.
+                    this.log(`funding resend: ${(e as Error).message}`)
+                })
+            this.state.funded = txid
+            delete this.state.pendingFund
+            this.save()
+            this.log(`funding transaction ${txid} was started by an earlier run`)
+            return
+        }
         const owner = await signer.getDefaultAddress()
         const feePerKb = await signer.connectedProvider.getFeePerKb()
         const coins = (await signer.listUnspent(owner)).sort(
@@ -645,15 +674,67 @@ class Rehearsal {
                 tx.to(this.identity(name).address, GATEWAY_FUNDS)
             tx.feePerKb(feePerKb).change(owner)
             if (tx.getChangeOutput() === null) continue
-            await signer.signAndsendTransaction(tx)
-            this.state.funded = tx.id
+            await tx.sealAsync()
+            const signed = await signer.signTransaction(tx)
+            this.state.pendingFund = { txid: signed.id, raw: signed.toString() }
+            this.save()
+            await signer.connectedProvider.sendRawTransaction(signed.toString())
+            this.state.funded = signed.id
+            delete this.state.pendingFund
             this.save()
             this.log(
-                `funded gateways A B C with ${GATEWAY_FUNDS} sats each: txid ${tx.id}`
+                `funded gateways A B C with ${GATEWAY_FUNDS} sats each: txid ${signed.id}`
             )
             return
         }
         throw new RehearsalFailure('the funding wallet cannot pay the gateways')
+    }
+
+    /**
+     * Send the remaining coins of each gateway wallet back to the funding
+     * address (one transaction per wallet, logged). A failure is logged and
+     * does not fail the rehearsal: the test itself has passed by then.
+     */
+    private async sweep(): Promise<void> {
+        const swept = (this.state.swept ??= {})
+        const target = bsv.Address.fromString(
+            this.state.fundingAddress as string
+        )
+        for (const name of GATEWAYS) {
+            if (swept[name]) continue
+            try {
+                const cfg = this.config(name)
+                const signer = this.d.signerFor(cfg)
+                const owner = await signer.getDefaultAddress()
+                const coins = await signer.listUnspent(owner)
+                const total = coins.reduce((sum, c) => sum + c.satoshis, 0)
+                if (coins.length === 0) {
+                    swept[name] = 'nothing'
+                    this.log(`SWEEP ${name}: no coins to send back`)
+                    this.save()
+                    continue
+                }
+                const feePerKb = await signer.connectedProvider.getFeePerKb()
+                const tx = new bsv.Transaction()
+                    .from(coins)
+                    .feePerKb(feePerKb)
+                    .change(target)
+                if (tx.getChangeOutput() === null || tx.outputs.length === 0) {
+                    swept[name] = 'nothing'
+                    this.log(`SWEEP ${name}: ${total} sats is too little to send back`)
+                    this.save()
+                    continue
+                }
+                await signer.signAndsendTransaction(tx)
+                swept[name] = tx.id
+                this.save()
+                this.log(
+                    `SWEEP ${name}: ${total} sats back to ${target.toString()}, txid ${tx.id}`
+                )
+            } catch (e) {
+                this.log(`SWEEP ${name} failed: ${(e as Error).message}`)
+            }
+        }
     }
 
     // ----- step 2: deploy and genesis -----------------------------------
@@ -680,6 +761,11 @@ class Rehearsal {
             })
         )
         if (!this.state.deployed && !sponsor.machineOutpoint) {
+            await this.checkDeployPending()
+            this.state.deployPending = {
+                balance: await this.d.balanceOf(this.state.fundingAddress as string),
+            }
+            this.save()
             const { code } = await this.command('deploy', (io) =>
                 deployCommand(
                     [
@@ -713,6 +799,8 @@ class Rehearsal {
             // A failed inscription leaves the machine deployed: finish it.
             if (code !== 0 && !after.machineOutpoint)
                 throw new RehearsalFailure('deploy failed')
+            delete this.state.deployPending
+            this.save()
         }
         let cfg = this.config('sponsor')
         if (!cfg.genesisInscription) {
@@ -753,6 +841,28 @@ class Rehearsal {
                 cfg.genesisInscription as string
             )
         }
+    }
+
+    /**
+     * A resume that finds a deploy marker but no machine outpoint in the
+     * config may have lost the outcome of a broadcast. When the funding
+     * balance dropped by about the deposit since the marker, the deploy
+     * went out: stop and ask for a manual check instead of deploying twice.
+     */
+    private async checkDeployPending(): Promise<void> {
+        const pending = this.state.deployPending
+        if (!pending) return
+        const balance = await this.d.balanceOf(this.state.fundingAddress as string)
+        const spent = pending.balance - balance
+        if (spent >= (this.state.deposit ?? 0) / 2)
+            throw new RehearsalFailure(
+                `an earlier run started the deploy and the funding balance fell by ${spent} sats since; ` +
+                    'check the funding address, then set [machine] outpoint and instance_id in sponsor.toml ' +
+                    'or remove "deployPending" from state.json'
+            )
+        this.log(
+            `deploy marker found, funding balance unchanged (${balance}); deploying`
+        )
     }
 
     private async checkGenesis(): Promise<void> {
@@ -884,7 +994,7 @@ class Rehearsal {
                 throw new RehearsalFailure(
                     `${label}: refused although it should be a member: ${text}`
                 )
-            if (/the machine rejects it|refused|has ended/.test(text))
+            if (/reading \d+ refused:|the machine rejects it/.test(text))
                 throw new RehearsalFailure(`${label} failed: ${text}`)
             return undefined
         })
@@ -1119,6 +1229,7 @@ class Rehearsal {
             removed: this.state.removed,
             refusals: this.state.refusals,
             halted: this.state.halted,
+            swept: this.state.swept,
             verified: this.state.verified,
             fundingBefore: this.state.fundingBefore,
         }
@@ -1184,7 +1295,9 @@ if (require.main === module) {
         if (/^connect failed/.test(message)) console.error(`warning: ${message}`)
         else throw reason
     })
+    // Exit at once: a command that was stopped by a stall can still hold a
+    // timer, and must not keep the process (or its broadcasts) alive.
     runRehearsal(liveDeps()).then((code) => {
-        process.exitCode = code
+        process.exit(code)
     })
 }

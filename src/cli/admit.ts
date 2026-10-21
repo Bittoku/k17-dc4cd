@@ -365,6 +365,14 @@ async function sponsorCommand(
         say(`${kind}: ${describeConfig(cfg)}`)
 
         let lastReason = ''
+        /**
+         * What the previous attempt tried to do: its roster sequence number,
+         * leaf and the first 104 hex characters of the leaf it wanted
+         * ('' for a removal). When that attempt fails with a conflict, the
+         * cycle can still have landed (the broadcast was accepted but the
+         * provider answered with an error).
+         */
+        let previous: { seq: bigint; index: number; leaf: string } | undefined
         /** Key hash of the leaf removed by index, kept from the first attempt. */
         let targetKeyHash: string | undefined
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -381,6 +389,24 @@ async function sponsorCommand(
                 throw new Refusal(
                     'the [attester] key is not the sponsor of this machine (sponsorKeyHash differs); nothing signed or sent'
                 )
+            if (
+                previous &&
+                machine.rosterSeq === previous.seq + 1n &&
+                mirror.proofFor(previous.index).leafPre.slice(0, 104) ===
+                    previous.leaf
+            ) {
+                // Exactly the requested change is on the chain, one step
+                // after the roster that the failed attempt signed.
+                saveTipOutpoint(configPath, tip)
+                say(
+                    `${kind === 'admit' ? 'admitted' : 'removed'} leaf ${
+                        previous.index
+                    } (the cycle landed although its broadcast was reported as a conflict) rosterSeq ${
+                        machine.rosterSeq
+                    } rosterRoot ${machine.rosterRoot} -> ${tip}`
+                )
+                return 0
+            }
             const operation =
                 kind === 'admit'
                     ? admission(
@@ -400,6 +426,14 @@ async function sponsorCommand(
                           targetKeyHash
                       )
             if (kind === 'remove') targetKeyHash = operation.memberKeyHash
+            previous = {
+                seq: machine.rosterSeq,
+                index: operation.index,
+                leaf:
+                    kind === 'admit'
+                        ? `${operation.memberKeyHash}${payoutHex}`.toLowerCase()
+                        : '',
+            }
 
             // Dry run: the same plan the tick makes, with no broadcast.
             const attemptTime = now()

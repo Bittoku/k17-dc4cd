@@ -104,11 +104,13 @@ export function decodeInstance(lockingScriptHex: string): DecodedInstance {
     let instance: K17Machine
     try {
         instance = K17Machine.fromLockingScript(lockingScriptHex) as K17Machine
+        // Rebuilding the script can also throw on a malformed state tail; any
+        // failure here means the script is not this artifact's machine.
+        if (instance.lockingScript.toHex() !== lockingScriptHex)
+            return { machine: null, reason: TEMPLATE_MISMATCH, instance: null }
     } catch {
         return { machine: null, reason: TEMPLATE_MISMATCH, instance: null }
     }
-    if (instance.lockingScript.toHex() !== lockingScriptHex)
-        return { machine: null, reason: TEMPLATE_MISMATCH, instance: null }
     return {
         reason: null,
         instance,

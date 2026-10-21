@@ -195,6 +195,15 @@ describe('chain layer', function () {
             ])
         })
 
+        it('returns a template reason, not an exception, when the state tail is malformed', () => {
+            const hex = newMachine(RELAY, ECON, 1n).lockingScript.toHex()
+            // Cut the serialised state short: rebuilding it must not throw.
+            const truncated = hex.slice(0, hex.length - 6)
+            const result = decodeMachine(truncated)
+            expect(result.machine).to.equal(null)
+            expect(result.reason).to.contain('template')
+        })
+
         it('returns null with "not a K17 machine" for a P2PKH script', () => {
             const result = decodeMachine(P2PKH(KEEPER_HEX).toHex())
             expect(result).to.deep.equal({
@@ -205,7 +214,9 @@ describe('chain layer', function () {
 
         it('returns a template reason when one code byte differs', () => {
             const hex = newMachine(RELAY, ECON, 1n).lockingScript.toHex()
-            const at = 400_000 // inside the contract code, far from the state tail
+            // A byte a quarter of the way in: inside the contract code, far from the
+            // state tail, whatever the script size.
+            const at = Math.floor(hex.length / 8) * 2
             const flipped =
                 hex.slice(0, at) +
                 (hex.slice(at, at + 2) === 'ff' ? '00' : 'ff') +

@@ -236,7 +236,7 @@ A landowner earns nothing in these cases:
 
 - **Unconfirmed cycles.** The chain accepts a chain of unconfirmed cycles. The tools do not wait for a confirmation between cycles.
 
-- **Fees.** A full cycle is about 720 KB and costs about 720 satoshis in fees on testnet. The fee comes from the wallet of the person who relays the cycle. The keeper reward comes from the machine.
+- **Fees.** A live cycle is about 367 KB (k17-vm after the interpreter shrink). The testnet runs here measured about 720 KB and about 720 satoshis before it. The fee comes from the wallet of the person who relays the cycle. The keeper reward comes from the machine.
 
 - **One wallet in many processes.** The tools list wallet coins without the coins that a mempool transaction spends. Two processes can use one wallet, one after the other. Do not run two of them with one wallet at the same time.
 

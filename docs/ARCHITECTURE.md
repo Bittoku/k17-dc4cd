@@ -14,7 +14,7 @@ This repository adds three things on top of K17:
 - program generators (`src/programs/`) for sensor consortiums: a relay, a fuzzy fire-detection demo, a slot-mode consortium and a tree-mode consortium;
 - chain tooling, the `k17forth` command (`src/cli/`, `src/chain/`, `src/gateway/`), which deploys a machine, keeps it running, lets gateways relay signed sensor readings, lets a sponsor manage the members, and audits the history.
 
-Together they let a DC4CD-style network settle on Bitcoin SV. DC4CD (Gaglio, Lo Re, Peri et al., ACM TECS 2017) is an active sensor network: the motes run Forth and exchange Forth code with `tell:`. Here the motes keep their Forth. A gateway turns each reading into a signed message, and the chain checks the signature, pays the sensor owner and records the reading.
+Together they let a DC4CD-style network settle on Bitcoin SV. DC4CD (Gaglio, Lo Re, Martorella and Peri, ACM TECS 2017) is an active sensor network: the motes run Forth and exchange Forth code with `tell:`. Here the motes keep their Forth. A gateway turns each reading into a signed message, and the chain checks the signature, pays the sensor owner and records the reading.
 
 ## 2. System components
 
@@ -26,7 +26,7 @@ flowchart LR
     end
     subgraph GW["Gateway: k17forth gateway"]
         Attester["Attester, member Rabin key"]
-        Mirror["Roster mirror, loadRoster"]
+        Mirror["Roster mirror, loadRoster (tree mode)"]
     end
     Keeper["Keeper.tick, MTP and MIN_STEP policy"]
     Machine[("K17 machine UTXO, on Bitcoin SV")]
@@ -40,6 +40,7 @@ flowchart LR
     Sponsor --> Keeper
     Compiler --> Sponsor
     Machine --> Mirror
+    Mirror --> Sponsor
     Machine --> Inspect
 ```
 
@@ -47,7 +48,7 @@ One sentence for each component:
 
 - **Sensor mote and bridge.** The mote runs the Forth words `>gateway` and `report` and prints one line `R <reading>` on a serial line (`docs/bridge-mote.fs`). `openBridge` in `src/gateway/bridge.ts` reads those lines from a serial device or from standard input and ignores every other line.
 - **Gateway.** `k17forth gateway run` (`src/cli/gateway.ts`, `src/gateway/gateway.ts`) takes each reading, checks the round, signs it and passes it to the keeper.
-- **Attester.** `MemberAttester` (tree mode) and `GatewayAttester` (slot mode) in `src/gateway/attester.ts` hold the member's Rabin key. They sign the reading and refuse what the chain would reject (round closed, reading out of range, key not in the roster).
+- **Attester.** `MemberAttester` (tree mode) and `GatewayAttester` (slot mode) in `src/gateway/attester.ts` hold the member's Rabin key. They sign the reading and refuse what the chain would reject: no round open, round closed, reading out of range (unless `sign_anyway` is set), and, for `GatewayAttester`, a slot that does not hold its key. In tree mode the gateway checks roster membership before every relay.
 - **Roster mirror.** `loadRoster` (`src/chain/loadRoster.ts`) rebuilds the Merkle roster from the genesis inscription and a replay of the whole machine history (`RosterMirror` in `src/chain/roster.ts`). It checks the result against the root and the sequence number at the tip. It is the only source of Merkle proofs.
 - **Keeper.** `Keeper.tick` (`src/chain/keeper.ts`) loads the machine, picks the lock time min(now, MTP - 1), plans the cycle with `planCycle` from `k17-vm`, and broadcasts it. When the chain clock has not moved 60 seconds past the last cycle (`MIN_STEP`), the tick reports `waiting for MTP` and sends nothing.
 - **K17 machine UTXO.** The covenant from `../k17-vm`. It checks every cycle: the signature, the Merkle proof, the payment and the next state.
@@ -55,7 +56,7 @@ One sentence for each component:
 - **inspect.** `src/cli/inspect.ts` and `src/chain/history.ts` walk the machine back to its deployment, replay every cycle and check the log hash exactly.
 - **Compiler and generators.** `src/forth/compiler.ts` compiles Forth to K17 bytecode. `src/programs/{relay,fuzzy,consortium,treeConsortium}.ts` generate Forth source for the sensor programs.
 
-The `keeper` command is a plain keeper. It does not relay tree-mode cycles that need a Merkle proof (a reading, `admit` or `remove`). On such a machine it reports `plan: ...` and sends nothing. Gateways and the sponsor tools relay those cycles.
+The `keeper` command is a plain keeper. It does not relay tree-mode cycles that need a Merkle proof (a reading, `admit` or `remove`). On such a machine it prints `skipped: needs witness` and sends nothing (it still halts the machine at its end time or by the dead-man). Gateways and the sponsor tools relay those cycles.
 
 ## 3. Implementing your own machine
 
@@ -84,20 +85,20 @@ A program is Forth source. Comments start with `\` or sit in `( ... )`. A number
 - **Control:** `if else then`, `begin until`, `begin again`, `begin while repeat`. K17 `IF` jumps when the top of the stack is zero, so `if ... then` runs its body when the value is not zero.
 - **Stack and arithmetic:** `dup drop swap over >r r> + - * / and or xor 0= min max`. `/` is unsigned integer division and faults on a zero divisor. `min` and `max` are the fuzzy AND and OR.
 - **Memory:** `@` and `!`. Cells from `roster-base` up are write-protected. The constants `roster-base`, `slot-cells`, `roster-slots`, `mem-cells` and `out-max` are built in.
-- **Machine:** `halt` (stop, refund), `yield` (end this cycle now), `time` (the lock time of the cycle), `in` (next witness cell), `verify` (the transaction is invalid when the value is zero), `out` (append to the output log), `hash`, `who`, `value`, `exit`.
+- **Machine:** `halt` (stop, refund the remaining balance to the beneficiary), `yield` (end this cycle now), `time` (the lock time of the cycle), `in` (next witness cell), `verify` (the transaction is invalid when the value is zero), `out` (append to the output log), `hash`, `who`, `value`, `exit`.
 - **Bounty and signatures, with a literal operand written before the word:** `150 bounty` releases 150 satoshis to the spender. `0 sigverify` checks a Rabin signature under roster slot 0 (`TAG VAL sigverify`).
 - **Slot-mode roster words:** `attest` (`TAG VAL SLOT --`), `endorse` (`TAG SLOT NEWSLOT --`), `payslot` (`N SLOT --`).
 - **Tree-roster words** (stack effects from `../k17-vm` README, "Tree roster"):
 
-| Word | Stack effect | Meaning |
-| --- | --- | --- |
-| `member` | `-- IDX` | Check the Merkle proof against the roster root and bind that member for the cycle. |
-| `lastround` | `-- R` | Push the bound member's `lastRound`. |
-| `attestm` | `TAG VAL --` | Check a reading signed by the bound member's key. |
-| `payleaf` | `N ROUND --` | Pay `N` satoshis to the bound member and set its `lastRound` to `ROUND`. `ROUND` must be above the old `lastRound`, or the transaction is invalid. |
-| `admit` | `TAG ROUND --` | The sponsor puts a new member into an empty leaf with `lastRound` = `ROUND`. |
-| `remove` | `TAG --` | The sponsor empties an occupied leaf. |
-| `outh` | `N --` | Fold `N` into the log hash. |
+| Word        | Stack effect   | Meaning                                                                                                                                            |
+| ----------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `member`    | `-- IDX`       | Check the Merkle proof against the roster root and bind that member for the cycle.                                                                 |
+| `lastround` | `-- R`         | Push the bound member's `lastRound`.                                                                                                               |
+| `attestm`   | `TAG VAL --`   | Check a reading signed by the bound member's key.                                                                                                  |
+| `payleaf`   | `N ROUND --`   | Pay `N` satoshis to the bound member and set its `lastRound` to `ROUND`. `ROUND` must be above the old `lastRound`, or the transaction is invalid. |
+| `admit`     | `TAG ROUND --` | The sponsor puts a new member into an empty leaf with `lastRound` = `ROUND`.                                                                       |
+| `remove`    | `TAG --`       | The sponsor empties an occupied leaf.                                                                                                              |
+| `outh`      | `N --`         | Fold `N` into the log hash.                                                                                                                        |
 
 The compiler places top-level code first, then `HALT`, then the colon definitions.
 
@@ -107,7 +108,7 @@ The compiler places top-level code first, then `HALT`, then the colon definition
 k17forth compile program.fs
 ```
 
-The command prints the hex, the disassembly and `cycles: ...`, the instruction count of each cycle. The count runs through the source in a straight line and ends a cycle at each `yield`. For a program without branches (the relay) the count is the real cycle size. For a program with branches (the tree consortium) it adds the branches together, so it is an upper bound. The real limit is the longest path through each cycle. `tests/treeConsortium.test.ts` checks that path (`longestBranches`).
+The command prints the hex, the disassembly and `cycles: ...`, the instruction count of each cycle. The count runs through the source in a straight line and ends a cycle at each `yield`. It does not follow calls: the compiler places colon definitions after the final `halt`, so their bodies are counted once, in the last cycle. The count is exact only for a program with no branches and no calls. For the relay it prints 18 for each hop, and the real hop is 36 (18 plus the 18 instructions of `accumulate`). For a program with branches (the tree consortium) it adds the branches together, so it is an upper bound. The real limit is the longest path through each cycle. `tests/treeConsortium.test.ts` checks that path (`longestBranches`).
 
 ### Step 3: try it on the reference VM
 
@@ -120,7 +121,7 @@ A scenario (`src/cli/scenario.ts`) lists cycles. Each cycle has a `lockTime`, th
 
 ### Step 4: respect the K = 40 budget
 
-Every cycle runs at most 40 instructions. If a stage is longer, put a `yield` in the middle so the stage becomes two transactions. Do not raise K. The relay does this: each hop is 36 instructions and ends in `yield`. The tree consortium keeps every branch inside 40: the reading branch is 36 instructions with a range check and 30 without.
+Every cycle runs at most 40 instructions. If a stage is longer, put a `yield` in the middle so the stage becomes two transactions. Do not raise K. The relay does this: each hop is 36 instructions and ends in `yield`. The tree consortium keeps every branch inside 40: the reading branch is at most 36 instructions with a range check (34 when the range starts at 0, as in the example below) and 30 without.
 
 ### A worked program: the relay
 
@@ -231,13 +232,13 @@ A worker is a sensor owner with a gateway. Its identity on the chain is a Rabin 
 
 **Slot mode** (`src/programs/consortium.ts`). The roster is eight slots in the machine memory. Slot 0 holds the sponsor. The sponsor key is in the deployment. A new member enters a free slot when an existing member vouches for it: the member signs an `ENDORSE` message for the new key, payout and slot, and the contract writes the slot. The consortium program has the sponsor endorse each landowner, in slot order, one cycle each, up to `enrolDeadline`. The roster is limited to seven landowners, and it ends at the enrolment deadline.
 
-**Tree mode** (`src/programs/treeConsortium.ts`). The roster is a sparse Merkle tree with 65 536 leaves. Only the root and a sequence number (`rosterSeq`) are in the machine. A leaf holds three things: the `keyHash` of the member's Rabin key, the `payout` (a 20-byte address hash) and `lastRound`, the last round the member was paid for. The sponsor admits and removes members at any time with `ADMIT` and `REMOVE`. Each of these signatures covers `rosterSeq`, and each operation adds 1 to it. So a signature is valid for one operation only, and nobody can replay an old admission after a removal.
+**Tree mode** (`src/programs/treeConsortium.ts`). The roster is a sparse Merkle tree with 65 536 leaves. Only the root and a sequence number (`rosterSeq`) are in the machine. A leaf holds the `keyHash` of the member's Rabin key, the `payout` (a 20-byte address hash) and `lastRound`, the last round the member was paid for (plus a reserved `flags` cell). The sponsor admits and removes members at any time with `ADMIT` and `REMOVE`. Each of these signatures covers `rosterSeq`, and each operation adds 1 to it. So a signature is valid for one operation only, and nobody can replay an old admission after a removal.
 
 Three rules in tree mode:
 
-- A genesis member has `lastRound` 0 and is first payable in round 1. A member admitted in round r gets `lastRound` r and is first payable in round r + 1, because `payleaf` needs a round above `lastRound`.
+- A genesis member has the `lastRound` given in `members.json` (normally 0) and is first payable in round 1 when it is 0. A member admitted in round r gets `lastRound` r and is first payable in round r + 1, because `payleaf` needs a round above `lastRound`.
 - The `REMOVE` signature covers the member's key hash and payout, not the whole leaf. `payleaf` changes `lastRound` only, so a removal that the sponsor signed before a payment is still valid after it. A member cannot dodge a removal by paying itself first.
-- Every tool rebuilds the roster from the genesis inscription and the history. Nobody can supply a leaf or a proof from anywhere else.
+- Every tool rebuilds the roster from the genesis inscription and the history. The tools take leaves and proofs only from this rebuild. The contract accepts any proof that leads to `rosterRoot`, whoever built it.
 
 ### Onboarding a gateway (tree mode)
 
@@ -254,8 +255,8 @@ sequenceDiagram
     C-->>G: tip, history and genesis inscription
     G->>G: finds its leaf by key hash
     loop each reading, from round r plus 1
-        G->>G: sign reading under the round tag
         G->>G: rebuild the proof with loadRoster
+        G->>G: sign reading under the round tag
         G->>C: relay the cycle with the Merkle proof
         C-->>G: payment to the payout of the leaf
     end
@@ -297,18 +298,18 @@ Automate the policy by scripting the real commands. This shell sketch removes a 
 
 ```bash
 #!/bin/sh
-# Remove tree-mode members that missed more than two rounds.
+# Remove tree-mode members that missed the last two completed rounds.
 # TIP is the tip outpoint (txid:vout), CURRENT_ROUND comes from start and period.
 TIP="$1"; CURRENT_ROUND="$2"
 k17forth inspect "$TIP" --history --json --config sponsor.toml |
   jq -r --argjson now "$CURRENT_ROUND" \
     '.tree.members[] | select(.lastRound + 2 < $now) | .index' |
 while read -r LEAF_INDEX; do
-  k17forth remove sponsor.toml --index "$LEAF_INDEX"
+  until k17forth remove sponsor.toml --index "$LEAF_INDEX"; do sleep 600; done
 done
 ```
 
-This script is a sketch. I did not run it against a live machine. It relies on the JSON shape in `src/cli/inspect.ts`: `tree.members` has `index`, `keyHash`, `payout` and `lastRound`, and `tree.readings` lists the paid readings. A member that was admitted late has a high `lastRound` and is safe from this rule. A member in the middle of a long wait for the chain clock can look late, so add your own grace period.
+This script is a sketch, untested against a live machine. Each removal needs a new block; the loop retries until it goes out. It relies on the JSON shape in `src/cli/inspect.ts`: `tree.members` has `index`, `keyHash`, `payout` and `lastRound`, and `tree.readings` lists the paid readings. A member that was admitted late has a high `lastRound` and is safe from this rule. A member in the middle of a long wait for the chain clock can look late, so add your own grace period.
 
 Admission scripts follow the same pattern: run your check, then `k17forth admit sponsor.toml --member-key <file> --payout <address>`. The sponsor runs one `admit` or `remove` at a time. Each needs a new block, because a cycle that keeps the machine alive must be at least 60 seconds after the one before.
 
@@ -316,7 +317,7 @@ Admission scripts follow the same pattern: run your check, then `k17forth admit 
 
 You write these rules in the program, and the contract enforces them for every party, sponsor included:
 
-- **First payable round.** `admit` takes a `ROUND` and stores it as the new member's `lastRound`. The member can be paid only in a later round. The generated program sets `ROUND` to the current round, so a new member waits one round. For a longer probation, change the program so that it adds a number of rounds to this value before `admit`, for example `time 1792303600 - 86400 / 3 +`. The program then fixes the delay for every admission; the sponsor cannot choose it per member. I did not run this change. It adds instructions to the admit branch, so check the branch against K = 40 with the `longestBranches` test.
+- **First payable round.** `admit` takes a `ROUND` and stores it as the new member's `lastRound`. The member can be paid only in a later round. The generated program sets `ROUND` to the current round, so a new member waits one round. For a longer probation, change the program so that it adds a number of rounds to this value before `admit`, for example `time 1792303600 - 86400 / 3 +`. The program then fixes the delay for every admission; the sponsor cannot choose it per member. This change is untested. It adds instructions to the admit branch, so check the branch against K = 40 with the `longestBranches` test.
 - **Reading checks.** The range check in the reading branch (`dup 10001 / if 0 verify then`) makes the transaction invalid for an out-of-range reading. The machine pays no refused reading. Add other checks the same way, as long as they fit the budget.
 - **Money.** `bountyPerReading` sets what a reading pays. The number of rounds and the round length set the end time.
 - **Branches.** The selector gives each cycle a branch: 0 reading, 1 admit, 2 remove. You can add branches, for example a second kind of reading, within 40 instructions per branch.
@@ -327,7 +328,7 @@ You write these rules in the program, and the contract enforces them for every p
 - **One signature per cycle.** `SIGVERIFY`, `ATTEST`, `ENDORSE`, `ATTESTM`, `ADMIT` and `REMOVE` share one signature slot, and a second one is a fault. So an admission needs one signer. Threshold or multi-sponsor admission is not on chain today. It is an alternative embodiment, not an implemented feature.
 - **Duplicate keys.** The tools (`deploy --tree`, `admit`) refuse a key that is in the roster already. The chain does not check this. A sponsor that uses another tool could admit one key twice, and that key would be paid twice in a round. `RosterMirror` keeps only the newest leaf for a key, so a duplicate can hide an older leaf. Admit each key once.
 - **Keeper command.** `k17forth keeper` does not relay tree cycles. Gateways and the sponsor tools do.
-- **One stuck cycle stops the tree tools.** `RosterMirror.apply` throws on a cycle it cannot replay (status `ambiguous`), so `loadRoster`, `admit`, `remove` and the tree gateway then fail. The funds stay safe: a keeper still halts the machine at its end, and the dead-man interval refunds the sponsor, and neither needs the roster.
+- **One stuck cycle stops the tree tools.** `RosterMirror.apply` throws on a cycle it cannot replay (status `ambiguous`), so `loadRoster`, `admit`, `remove` and the tree gateway then fail. The funds stay safe: a keeper still halts the machine at its end, and the dead-man interval refunds the beneficiary, and neither needs the roster.
 
 ## 6. What settling DC4CD on a blockchain gains: security
 
@@ -351,7 +352,7 @@ The reading goes to the chain as a Rabin-signed message. The contract checks the
 - **Replay into another machine.** The signature binds the `instanceId` of one machine.
 - **Replay into another round.** The signature binds a round tag, `0x40000000 + r`, and the program computes `r` from the lock time. Once a member is paid in a round, `payleaf` needs a higher round next time, so one member gets one payment per round.
 - **Replay of an old admission or removal.** Both messages bind `rosterSeq`, which grows with every operation.
-- **Impersonation.** A cycle that pays a member must carry that member's key and a Merkle proof of its leaf against the root. Only the sponsor can change the root (`ADMIT` and `REMOVE` need a sponsor signature). Without a member's Rabin key you cannot sign for that member.
+- **Impersonation.** A cycle that pays a member must carry that member's key and a Merkle proof of its leaf against the root. Only the sponsor can change who is in the roster or where a member is paid (`ADMIT` and `REMOVE` need a sponsor signature). `PAYLEAF` changes only the member's `lastRound`. Without a member's Rabin key you cannot sign for that member.
 
 The effect is that the content of a reading, and its payment, cannot be changed between the gateway and any later reader. A third party can still watch a signed reading and relay it first. That earns the third party the keeper reward and changes nothing else.
 
@@ -363,12 +364,14 @@ flowchart LR
         Mote["Sensor mote"]
         GW["Gateway and member key"]
     end
-    subgraph T2["Authenticated by signatures and covenant"]
+    subgraph T2["Untrusted, checked by signatures and covenant"]
         Relay["Relayer or keeper"]
         Cov["K17 covenant, Merkle proof and rosterRoot"]
         Hist["Chain history, logHash"]
     end
-    Spon["Sponsor key"]
+    subgraph T3["Trusted for membership"]
+        Spon["Sponsor key"]
+    end
     Auditor["Any auditor, inspect --history"]
 
     Mote -. "serial line: no signature" .-> GW
@@ -387,16 +390,19 @@ The gateway signs, not the mote. The line `R <reading>` on the serial link has n
 
 ### Other properties
 
-- **Tamper-evident dataset.** Every paid reading is in the chain history, and the machine folds each logged value into `logHash := sha256(logHash || cell(value))`. `inspect --history` replays every cycle, repeats the fold and compares it with the machine's `logHash`. The check is exact for any program, not only the generated ones. `mismatch` exits with code 1. `not checked` appears only when a cycle could not be replayed. Anyone who can read the chain can run it.
+- **Tamper-evident dataset.** Every paid reading is in the chain history, and the machine folds each value the program emits with `outh` into `logHash := sha256(logHash || cell(value))`. `inspect --history` replays every cycle, repeats the fold and compares it with the machine's `logHash`. The check is exact for any program, not only the generated ones. `mismatch` exits with code 1. `not checked` appears only when a cycle could not be replayed. Anyone who can read the chain can run it.
 - **Censorship and withholding.** The protocol lets any party relay a signed reading, including the member itself. A relayer that holds a signed reading can delay it but cannot stop the member from relaying it again. In this repository, the gateway relays its own readings. A party on the mote-to-gateway link can still drop a reading before it is signed.
 - **Adversarial members.** A malicious member can submit its own signed values, once per round, inside the program's range. It cannot touch another leaf or another payout. The sponsor can remove it, and the removal works in the next cycle. The chain does not tell you whether a member's in-range value is true. For that you need redundancy: several members for one region, and aggregation across them. The fuzzy program (`src/programs/fuzzy.ts`, DC4CD section 5.2) shows the idea. It takes attested opinions from a local node and its neighbours, combines them with fuzzy AND (`min`) and OR (`max`), and compares the result with a threshold. It uses the fixed slot roster and is a demonstration. The tree consortium program pays and logs each reading on its own and does not aggregate. With it you aggregate off chain from the verified log.
 
 ### Residual risks
 
 - **Sponsor key compromise.** The sponsor key signs every admission and removal. A thief can admit its own members, who are then paid from the deposit, and can remove honest members. The sponsor key cannot take the deposit directly. The deposit goes to the beneficiary set at deployment on `halt`, on a fault or by the dead-man.
-- **Mote or gateway compromise.** See the section on the mote-to-gateway link. A stolen member key lets the thief sign for that member until the sponsor removes it.
-- **Narrow transaction malleability.** `../k17-vm` README, "Residual malleability", lists three cases that the contract does not close: (1) a witness cell that `IN` consumes but that reaches neither the next state nor a signed message can change without a change to the outputs, and on the halted path this is always so; (2) non-minimal push encodings break relay policy (`MINIMALDATA`), not consensus, so a miner can still re-encode a cycle; (3) a payout can clamp the keeper reward to zero, and then the `keeper` argument is not pinned. The effect is that a rewritten transaction gets a new txid and can orphan unconfirmed cycles chained after it. With lock time MTP - 1 and `MIN_STEP`, keepers make one live cycle per block and do not chain unconfirmed cycles, so a rewrite costs the keeper only a new plan.
-- **Cost per reading.** A tree-mode reading is one chained cycle transaction, so readings on one machine are sequential. This repository's README and tutorial give a measured full cycle of about 720 KB and about 720 satoshis in fees on testnet. `../k17-vm` later reduced the interpreter: its README lists a 183 KB locking script, and says a cycle that continues is about twice the locking script. I did not measure the new size here. Rounds of a day or more suit this design, and so do hundreds of members, not thousands.
+- **Mote or gateway compromise.** See the section on the mote-to-gateway link. A stolen member key lets the thief sign for that member until the sponsor removes it. The payments still go to the payout address in the member's leaf. The payments still go to the payout address in the member's leaf.
+- **Narrow transaction malleability.** `../k17-vm` README, "Residual malleability", lists three cases that the contract does not close: (1) a witness cell that `IN` consumes but that reaches neither the next state nor a signed message can change without a change to the outputs, and on the halted path this is always so; (2) non-minimal push encodings break relay policy (`MINIMALDATA`), not consensus, so a miner can still re-encode a cycle; (3) a payout can clamp the keeper reward to zero, and then the `keeper` argument is not pinned. The effect is that a rewritten transaction gets a new txid and can orphan unconfirmed cycles chained after it. With lock time MTP - 1 and `MIN_STEP`, keepers make at most one live cycle per block, so a cycle rarely builds on an unconfirmed one (the tools accept such chains), and a rewrite usually costs the keeper only a new plan.
+- **Cost per reading.** A tree-mode reading is one cycle transaction, so readings on one machine are sequential. `../k17-vm` measures the current K = 40 locking script at 182 986 bytes. A cycle that keeps the machine alive also carries the next state output, so it is about twice that: the measured enrolment cycle is 366 514 bytes, and a tree reading is about the same, about 367 KB. The testnet runs in this repository (about 720 KB and about 720 satoshis in fees per cycle) predate that reduction. At the same fee rate a live cycle now costs about 370 satoshis (an estimate, not measured here). With the implemented keeper policy (lock time MTP - 1) a machine takes about one live cycle per block, about 144 a day, and admissions and removals share them. A daily round therefore serves at most about 140 members per machine. More members need longer rounds or several machines.
+- **Trust in the sponsor.** Members trust the sponsor. It can remove any member at any time, and the unspent deposit returns to the beneficiary it chose. The chain guarantees only that each accepted reading is paid at once.
+- **Miner inclusion.** Any party can relay, but miners can still decline to mine a cycle. The chain does not guarantee inclusion.
+- **Dead-man after an MTP jump.** An MTP jump of `deadMan` or more lets any keeper end a healthy machine early.
 - **Latency.** A hop is a block, not a millisecond, and a round closes when the median time past passes its end. This is not a real-time sensor network.
 - **No code-carrying `tell:` between machines.** DC4CD nodes send each other Forth source. On the chain, a program is fixed at deployment and no machine sends code to another machine. Two machines that message each other in one transaction are a parked design, blocked on interpreter size (`docs/inter-machine-tell.md`).
 

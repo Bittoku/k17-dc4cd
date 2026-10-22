@@ -33,7 +33,7 @@ No new opcode is needed. The message is atomic (same transaction), authenticated
 
 1. **`SIGHASH_ALL` commits to every output.** To check `hashOutputs`, each machine
    must be handed the full serialised outputs, including the _other_ machine's new
-   locking script. At 202 KB per interpreter (K=40, 32 handlers), the unlocking
+   locking script. At 202 KB per interpreter (K=40, 32 handlers; now 183 KB with 43 handlers), the unlocking
    script of each input carries the other's 202 KB, so the transaction roughly
    triples in size.
 2. **`SIGHASH_SINGLE` fixes (1) and breaks the message.** Under SINGLE each input

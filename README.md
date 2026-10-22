@@ -6,7 +6,7 @@ Gaglio, Lo Re, Martorella and Peri built DC4CD (ACM TECS 2017): sensor motes tha
 run Forth as their operating system and cooperate by sending each other Forth
 source. This repository ports their two case studies to **K17+**, a Koopman
 canonical stack machine hosted in a Bitcoin SV covenant
-([`../k17-vm`](../k17-vm)). The UTXO is the message: it carries the program and
+(<https://github.com/Bittoku/k17-vm>). The UTXO is the message: it carries the program and
 its state from hop to hop. The chain supplies what the radio did not — signed
 readings, ordering, replay protection, payment for whoever relays, and an audit
 trail — at the price of block latency and transaction fees.
@@ -76,7 +76,7 @@ These rules come from the testnet spike and the rehearsal of 2026-10-19.
 
 - The chain accepts chains of unconfirmed cycles. The tools do not wait for confirmations.
 
-- A full cycle is about 720 KB and costs about 720 satoshis in fees on testnet.
+- A live cycle is about 367 KB (k17-vm after the interpreter shrink). The testnet runs here measured about 720 KB and about 720 satoshis before it.
 
 - The tools list wallet coins from WhatsOnChain without the coins that a mempool transaction spends. They retry rate-limited calls (HTTP 429) and reads of a transaction that is not yet indexed.
 
@@ -84,7 +84,7 @@ These rules come from the testnet spike and the rehearsal of 2026-10-19.
 
 - Tree mode: the tools refuse a member key that is in the roster already. The chain does not check this, so the roster mirror keeps only the newest leaf for a key. Admit each key once.
 
-- Tree mode: the tools rebuild the roster by replaying every cycle from the genesis inscription. If one cycle cannot be replayed, `admit`, `remove` and the tree gateway stop until the cause is fixed. The funds stay safe: the keeper still halts the machine at its end time, and the dead-man interval refunds the sponsor.
+- Tree mode: the tools rebuild the roster by replaying every cycle from the genesis inscription. If one cycle cannot be replayed, `admit`, `remove` and the tree gateway stop until the cause is fixed. The funds stay safe: the keeper still halts the machine at its end time, and the dead-man interval refunds the beneficiary.
 
 ## The relay in Forth
 
@@ -108,10 +108,11 @@ attestation check, the bounty and the end of the hop are one transaction.
 - Not a wireless sensor network. Readings reach the chain through a gateway, and a
   hop is a block, not a millisecond. Candidates are control loops with periods of
   minutes or more.
-- The interpreter is 202 KB of script at K=40; fees per cycle follow from that, not
-  from the program. Shrinking it is the open engineering item.
-- Roster keys are fixed at deployment (four slots). An open roster needs a Merkle
-  root and inclusion proofs; not built.
+- The interpreter is 182 986 bytes of script at K=40 (43 handlers), and a live cycle
+  is about twice that; fees per cycle follow from that, not from the program.
+  Shrinking it further is an open engineering item.
+- Slot mode keeps a fixed roster in memory (seven landowners). Tree mode keeps an open
+  Merkle roster (65 536 leaves) that the sponsor changes with `admit` and `remove`.
 - The nChain byte-interpretation patent family reads on the architecture. See
   `k17-vm/CLAUDE.md`; freedom-to-operate opinion before any commercial use.
 

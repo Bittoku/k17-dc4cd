@@ -57,8 +57,29 @@ class MemoryChain extends DummyProvider {
         return tx
     }
 
+    /**
+     * Failure to inject into the next machine broadcast: 'before' throws
+     * without taking the tx; 'after' takes the tx and then throws (a timeout).
+     */
+    failNext?: 'before' | 'after'
+
     async sendRawTransaction(rawTxHex: string): Promise<string> {
         const tx = new bsv.Transaction(rawTxHex)
+        const spendsMachine = tx.inputs.some((input) => {
+            const prev = this.txs.get(input.prevTxId.toString('hex'))
+            const output = prev?.outputs[input.outputIndex]
+            return !!output && output.script.toBuffer().length > 10_000
+        })
+        const fail = spendsMachine ? this.failNext : undefined
+        if (fail) this.failNext = undefined
+        if (fail === 'before') throw new Error('socket hang up')
+        for (const input of tx.inputs) {
+            const spender = this.spenders.get(
+                `${input.prevTxId.toString('hex')}:${input.outputIndex}`
+            )
+            if (spender && spender !== tx.id)
+                throw new Error('txn-mempool-conflict')
+        }
         for (const input of tx.inputs) {
             const prev = this.txs.get(input.prevTxId.toString('hex'))
             const output = prev?.outputs[input.outputIndex]
@@ -70,6 +91,7 @@ class MemoryChain extends DummyProvider {
             )
         }
         this.txs.set(tx.id, tx)
+        if (fail === 'after') throw new Error('timeout after send')
         return tx.id
     }
 
@@ -311,6 +333,69 @@ describe('top-up', function () {
             expect(secondValue).to.equal(firstValue - second.reward!)
         })
 
+        it('a send that fails before the network took it keeps the top-up pending; the retry adds it once', async () => {
+            const { chain, signer } = setup()
+            const { cfg } = await deployed(chain, signer, heartbeatProgram())
+            const keeper = keeperOn(cfg, chain, signer, TOP_UP)
+            chain.failNext = 'before'
+            const failed = await keeper.tick(T0 + 100)
+            expect(failed.txid).to.equal(undefined)
+            expect(failed.error).to.contain('socket hang up')
+            const retried = await keeper.tick(T0 + 100)
+            expect(retried.error).to.equal(undefined)
+            expect(retried.topUp).to.equal(TOP_UP)
+            const later = await keeper.tick(T0 + 200)
+            expect(later.topUp).to.equal(undefined)
+            const out = (id: string) =>
+                BigInt(chain.txs.get(id)!.outputs[0].satoshis)
+            expect(out(retried.txid!)).to.equal(
+                BigInt(FUNDING) - retried.reward! + TOP_UP
+            )
+            expect(out(later.txid!)).to.equal(
+                out(retried.txid!) - later.reward!
+            )
+        })
+
+        it('a send that fails after the network took it does not add the top-up twice', async () => {
+            const { chain, signer } = setup()
+            const { cfg } = await deployed(chain, signer, heartbeatProgram())
+            const keeper = keeperOn(cfg, chain, signer, TOP_UP)
+            chain.failNext = 'after'
+            const failed = await keeper.tick(T0 + 100)
+            expect(failed.txid).to.equal(undefined)
+            expect(failed.error).to.contain('timeout after send')
+            // The next tick hits a conflict with its own earlier cycle.
+            const next = await keeper.tick(T0 + 200)
+            expect(next.error).to.equal(undefined)
+            expect(next.resynced).to.equal(true)
+            expect(next.topUpLanded).to.equal(TOP_UP)
+            expect(next.topUp).to.equal(undefined)
+            expect(tickLine(next)).to.contain('added by an earlier send')
+            // The first cycle landed with the top-up; this one adds none.
+            const cycles = await walkHistory(chain, next.outpoint!)
+            expect(cycles.map((c) => c.topUp)).to.deep.equal([TOP_UP, 0n])
+            expect(keeper.unaddedTopUp).to.equal(0n)
+        })
+
+        it('a wallet-funded top-up cycle has no output but the machine, the reward and the change', async () => {
+            const { chain, signer } = setup()
+            const { cfg } = await deployed(chain, signer, heartbeatProgram())
+            const topped = await keeperOn(cfg, chain, signer, TOP_UP).tick(
+                T0 + 100
+            )
+            const tx = chain.txs.get(topped.txid!)!
+            const wallet = bsv.Script.buildPublicKeyHashOut(
+                WALLET_KEY.toAddress()
+            ).toHex()
+            expect(tx.outputs).to.have.length(3)
+            expect(BigInt(tx.outputs[0].satoshis)).to.equal(
+                BigInt(FUNDING) - topped.reward! + TOP_UP
+            )
+            expect(tx.outputs[1].satoshis).to.equal(Number(topped.reward))
+            expect(tx.outputs[1].script.toHex()).to.equal(wallet)
+            expect(tx.outputs[2].script.toHex()).to.equal(wallet)
+        })
+
         it('prints the top-up in the tick line', () => {
             const line = tickLine({
                 txid: 'ab'.repeat(32),
@@ -351,6 +436,53 @@ describe('top-up', function () {
             expect(halted.halted).to.equal(true)
             expect(halted.deadManHalt).to.equal(true)
             expect(halted.topUp).to.equal(undefined)
+            expect(keeper.unaddedTopUp).to.equal(TOP_UP)
+        })
+
+        it('the keeper command ends with a line when the top-up was not added', async () => {
+            const { chain, signer } = setup()
+            const deadMan = DEAD_MAN_FLOOR
+            const { cfg } = await deployed(
+                chain,
+                signer,
+                assemble(['IN', 'OUT', 'HALT']),
+                deadMan
+            )
+            const due = T0 + Number(deadMan)
+            const dir = mkdtempSync(join(tmpdir(), 'k17topup-'))
+            const config = join(dir, 'gw.toml')
+            writeFileSync(
+                config,
+                `[network]\nname = "testnet"\n[wallet]\nwif = "${WALLET_KEY.toWIF()}"\n[machine]\noutpoint = "${
+                    cfg.machineOutpoint
+                }"\n`
+            )
+            chmodSync(config, 0o600)
+            const { lines, io } = sink()
+            const code = await keeperCommand(
+                ['--config', config, '--top-up', '5000'],
+                io,
+                {
+                    provider: chain,
+                    signer,
+                    keeper: {
+                        chainInfo: async () => ({
+                            mediantime: due + 1,
+                            blocks: 1,
+                        }),
+                        spentBy: (op) => chain.spentBy(op),
+                    },
+                    now: () => due + 5,
+                    sleep: async () => undefined,
+                }
+            )
+            expect(code).to.equal(0)
+            const text = lines.join('\n')
+            expect(text).to.contain('top-up of 5000 sats refused')
+            expect(text).to.contain('dead-man halt')
+            expect(lines[lines.length - 1]).to.equal(
+                'top-up of 5000 sats was not added'
+            )
         })
 
         it('the keeper command takes --top-up once and reports it', async () => {

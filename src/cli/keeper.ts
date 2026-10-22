@@ -59,6 +59,10 @@ export function tickLine(result: TickResult): string {
             result.mtp
         }) reward ${result.reward}${
             result.topUp ? ` top-up: ${result.topUp} sats` : ''
+        }${
+            result.topUpLanded
+                ? ` top-up: ${result.topUpLanded} sats (added by an earlier send)`
+                : ''
         }${result.deadManHalt ? ' (dead-man halt)' : ''}${resync} -> ${
             result.halted ? 'halted' : result.outpoint
         }`
@@ -136,14 +140,23 @@ export async function keeperCommand(
     const sleep =
         deps.sleep ??
         ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+    /**
+     * End the run: print a closing line when a top-up was not added.
+     * Input: none. Output: exit code 0.
+     */
+    const closeRun = (): number => {
+        if (keeper.unaddedTopUp > 0n)
+            io.out(`top-up of ${keeper.unaddedTopUp} sats was not added`)
+        return 0
+    }
     for (let tick = 1; deps.ticks === undefined || tick <= deps.ticks; tick++) {
         const result = await keeper.tick(now())
         const line = hide(tickLine(result))
         if (result.error) io.err(line)
         else io.out(line)
-        if (result.halted) return 0
+        if (result.halted) return closeRun()
         if (deps.ticks === undefined || tick < deps.ticks)
             await sleep(interval * 1000)
     }
-    return 0
+    return closeRun()
 }

@@ -34,6 +34,7 @@ import {
     CycleTree,
     K17Machine,
     NO_SIG,
+    addrOf,
     assertChangeOutput,
     bindCycleBuilder,
     outputLog,
@@ -43,7 +44,7 @@ import {
 } from 'k17-vm'
 import { GatewayConfig, hideSecrets, startOutpoint } from './config'
 import { ChainInfo, FetchLike, chainInfo, wocFetch } from './provider'
-import { Outpoint, parseOutpoint } from './history'
+import { Outpoint, decodeUnlocking, parseOutpoint } from './history'
 import { decodeMachine } from './decode'
 
 /** A signed input that the keeper gives to the next cycle that needs one. */
@@ -86,6 +87,12 @@ export interface TickResult {
      * when a cycle was broadcast with a top-up above 0.
      */
     topUp?: bigint
+    /**
+     * Sats of a top-up that an earlier send of this keeper added: the send
+     * reported an error, but the resync found that this keeper's own cycle
+     * had landed. The keeper does not add the top-up a second time.
+     */
+    topUpLanded?: bigint
     /**
      * True when the keeper refused a pending top-up because the planned
      * cycle halts the machine (a halting cycle takes no top-up). Nothing was
@@ -263,6 +270,16 @@ export class Keeper {
     private halted = false
     /** Top-up (sats) that the next cycle to go out carries; 0 when none. */
     private pendingTopUp: bigint
+    /** Sats of top-up that were dropped (refused on a halting cycle). */
+    private droppedTopUp = 0n
+    /** Top-up cycles handed to the provider and not yet known to have landed. */
+    private topUpAttempts: {
+        keeperHex: string
+        lockTime: number
+        sats: bigint
+    }[] = []
+    /** Top-up (sats) that resync found landed by an earlier, failed-looking send. */
+    private landedTopUp = 0n
     private readonly cfg: GatewayConfig
     private readonly readChain: () => Promise<ChainInfo>
     private readonly spentBy: (
@@ -293,6 +310,16 @@ export class Keeper {
         this.spentBy =
             options.spentBy ??
             ((op) => wocSpentBy(cfg.network, op, options.fetch))
+    }
+
+    /**
+     * Top-up (sats) that was asked for but did not go out: dropped on a
+     * halting cycle, or still pending. 0 when none or when it landed.
+     * Output: the sats, for a closing line such as "top-up of N sats was
+     * not added".
+     */
+    get unaddedTopUp(): bigint {
+        return this.droppedTopUp + this.pendingTopUp
     }
 
     /**
@@ -384,7 +411,7 @@ export class Keeper {
             const attempt = await this.advance(current, now, mtp, input)
             if (attempt.result) {
                 return resynced
-                    ? { ...attempt.result, resynced: true }
+                    ? { ...attempt.result, resynced: true, ...this.landed() }
                     : attempt.result
             }
             const message = attempt.broadcastError as string
@@ -398,13 +425,43 @@ export class Keeper {
                 const found = await this.resync(current)
                 if (found === 'halted') {
                     this.halted = true
-                    return { mtp, ...HALTED, resynced: true }
+                    return { mtp, ...HALTED, resynced: true, ...this.landed() }
                 }
             } catch (e) {
                 return { mtp, error: `resync: ${messageOf(e)}` }
             }
             resynced = true
         }
+    }
+
+    /**
+     * Tell if a cycle transaction is the top-up cycle this keeper sent.
+     * Input: the transaction that spent the machine and the remembered
+     * attempt. Output: true when input 0 carries the same keeper address,
+     * top-up and lock time.
+     */
+    private isOurTopUpCycle(
+        tx: bsv.Transaction,
+        attempt: { keeperHex: string; lockTime: number; sats: bigint }
+    ): boolean {
+        const args = decodeUnlocking(tx.inputs[0].script.chunks)
+        return (
+            !!args &&
+            args.topUp === attempt.sats &&
+            args.keeperHex === attempt.keeperHex &&
+            tx.nLockTime === attempt.lockTime
+        )
+    }
+
+    /**
+     * Report a top-up that resync found landed.
+     * Output: `{ topUpLanded }` when one landed (then it is reported once),
+     * else an empty object.
+     */
+    private landed(): { topUpLanded?: bigint } {
+        const sats = this.landedTopUp
+        this.landedTopUp = 0n
+        return sats > 0n ? { topUpLanded: sats } : {}
     }
 
     /**
@@ -508,6 +565,7 @@ export class Keeper {
             // and drop the top-up so the next tick can halt the machine.
             if (/halting cycle takes no top-up/.test(message)) {
                 const dropped = this.pendingTopUp
+                this.droppedTopUp += dropped
                 this.pendingTopUp = 0n
                 return {
                     result: {
@@ -534,9 +592,33 @@ export class Keeper {
                 // change output and then sends.
                 { ...options, partiallySigned: true }
             )
+            // Guard: the machine output must hold remaining + topUp, so a
+            // builder fault never sends wallet sats anywhere else.
+            if (
+                !plan.halted &&
+                BigInt(tx.outputs[0].satoshis) !== plan.remaining + plan.topUp
+            )
+                throw new Error(
+                    `built cycle holds ${
+                        tx.outputs[0].satoshis
+                    } sats in the machine output, expected ${
+                        plan.remaining + plan.topUp
+                    } (remaining ${plan.remaining} + top-up ${
+                        plan.topUp
+                    }); nothing sent`
+                )
+            // Remember a top-up cycle before it is sent: if the send reports
+            // an error but the network took it, resync must not add it again.
+            if (plan.topUp > 0n)
+                this.topUpAttempts.push({
+                    keeperHex: addrOf(keeper),
+                    lockTime,
+                    sats: plan.topUp,
+                })
             await broadcastCycle(this.provider, tx)
             // The top-up went out with this cycle; later cycles carry 0.
             this.pendingTopUp = 0n
+            this.topUpAttempts = []
             const logged = outputLog(plan.nextState).slice(
                 outputLog(stateOf(m)).length
             )
@@ -587,6 +669,21 @@ export class Keeper {
                 return 'found'
             }
             tx = await this.provider.getTransaction(spender)
+            if (
+                this.pendingTopUp > 0n &&
+                this.topUpAttempts.some((attempt) =>
+                    this.isOurTopUpCycle(tx, attempt)
+                )
+            ) {
+                // Our own top-up cycle landed although the send failed. It
+                // is matched by its content (keeper address, top-up, lock
+                // time), not by txid or funding coins: the txid is not final
+                // when the attempt is remembered, and a retry can pick other
+                // wallet coins.
+                this.landedTopUp += this.pendingTopUp
+                this.pendingTopUp = 0n
+                this.topUpAttempts = []
+            }
             if (
                 !tx.outputs[0] ||
                 !decodeMachine(tx.outputs[0].script.toHex()).machine

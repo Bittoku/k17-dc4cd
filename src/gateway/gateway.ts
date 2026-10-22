@@ -438,6 +438,8 @@ export class Gateway {
                 ;(this.bridge as Partial<Bridge>).close?.()
             }
         }
+        const unadded = this.keeper.unaddedTopUp
+        if (unadded > 0n) this.out(`top-up of ${unadded} sats was not added`)
         if (code === 0 && this.once && !deliveredOnce) return NOT_DELIVERED
         return code
     }
@@ -708,6 +710,8 @@ export class Gateway {
                         saved
                 )
             }
+            // A refused top-up is already dropped: plan again at once.
+            if (result.topUpRefused && attempt + 1 < TREE_ATTEMPTS) continue
             const rejected = /witness rejected/.test(result.error ?? '')
             const isStale = rejected || (result.resynced && !!result.error)
             if (isStale && attempt + 1 < TREE_ATTEMPTS) {

@@ -13,7 +13,7 @@ trail — at the price of block latency and transaction fees.
 
 ## Architecture
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the components, how to build your own machine, how gateways join and leave, and the security model.
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes the components and the security model. It also shows how to build your own machine and how gateways join and leave.
 
 ## Contents
 

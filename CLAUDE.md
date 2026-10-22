@@ -23,7 +23,7 @@ held write-up belong here.
 
 ## Chain tooling (k17forth)
 
-- Commands: `inspect`, `deploy`, `inscribe-genesis`, `admit`, `remove`, `endorse`, `keeper`, `gateway init|run` (see the README table and
+- Commands: `inspect`, `deploy`, `inscribe-genesis`, `admit`, `remove`, `endorse`, `keeper`, `gateway init|run`, `topup offer|sign|complete` (see the README table and
   `docs/tutorial-dc4cd-gateway.md`). `main()` loads the K17Machine artifact for these commands.
 - Tests never use the network: the root hook `tests/utils/no-network.ts` (`.mocharc.json`
   `require`) fails any test that calls a non-local host. Inject `provider`, `signer`, `keeper` (chain info, spends lookup)
@@ -39,6 +39,7 @@ held write-up belong here.
   `waiting for MTP` until the next block. A halting cycle (fault, HALT, dead-man) is exempt.
   `TickResult.deadManHalt` and the keeper log line ("dead-man halt") report a dead-man refund.
 - Escrow top-up: `--top-up <sats>` on `keeper`, `gateway run`, `admit`, `remove` and `endorse` sets `KeeperOptions.topUp`. `Keeper` keeps it as a pending amount and puts it on the FIRST cycle that goes out (`planCycle(..., { topUp })`; the wallet pays it through autoPayfee); later cycles carry 0, in the long-running loops too. A halting cycle takes no top-up: the planner throws, the tick returns `topUpRefused` with an error, nothing is broadcast, and the pending top-up is dropped so the next tick can still halt the machine. `TickResult.topUp` and `tickLine` (`top-up: N sats`) report it; `DecodedCycle.topUp` and the `inspect --history` line (`top-up N`) show it.
+- Third-party top-up (`src/chain/topup.ts`, `src/cli/topup.ts`): `topup offer` (funder) writes `offer.json` (coin of exactly the amount on the funder's P2PKH key, funder public key, instance id, network); `admit`, `remove` and `endorse` take `--top-up-offer <offer.json>` (with `--top-up` it is a usage error) and call `Keeper.buildTopUpRequest`, which plans with `topUp` = amount and runs k17-vm `sendCycle` with a funder callback that captures the final tx and stops (`buildFundedCycle`); the command writes `topup-request.json` and broadcasts nothing. `topup sign` (funder) checks only data it reads from the chain (`checkRequestForFunder`: tip and instance id, `topUp` chunk, coin value, coin input once at the stated index and unspent, then the interpreter on input 0) and writes `sig.json`; `topup complete` inserts the scriptSig, verifies every input, refuses a moved machine with `offer expired: the machine moved; build a new request`, and broadcasts. `keeper` and `gateway run` (also `--once`) refuse `--top-up-offer` with exit code 2. The files hold no private key; they are the only state between the processes.
 - `deploy --dead-man <seconds>` sets the immutable dead-man interval (0 = off; otherwise at least
   `DEAD_MAN_FLOOR`, 6 h). Use 30 days for daily rounds. `inspect` prints it (`dead-man: off`).
 - `makeProvider` lists coins from WhatsOnChain `confirmed/unspent` + `unconfirmed/unspent` and

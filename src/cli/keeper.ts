@@ -3,7 +3,11 @@
  *
  * Runs `Keeper.tick` for the machine in the config file, once every
  * `--interval` seconds (default 60, at least 1), and prints one line per
- * tick. It stops when the machine halts. Broadcast errors are printed and
+ * tick. It stops when the machine halts. `--top-up <sats>` adds sats to the
+ * machine escrow with the FIRST cycle that goes out (once, not every cycle):
+ * the wallet of the command pays it, and later cycles add nothing. A halting
+ * cycle takes no top-up, so the keeper refuses it, prints why, drops it and
+ * goes on (the next tick can halt the machine). Broadcast errors are printed and
  * the loop goes on; the keeper itself retries a conflicting spend once per
  * tick. A mainnet config needs `--i-know-this-spends-real-money`, because
  * the keeper pays fees.
@@ -13,12 +17,13 @@ import type { Provider, Signer } from 'scrypt-ts'
 import { describeConfig, hideSecrets, loadConfig } from '../chain/config'
 import { Keeper, KeeperOptions, TickResult } from '../chain/keeper'
 import { makeProvider, makeSigner } from '../chain/provider'
-import { parseFlags } from './flags'
+import { parseFlags, parseTopUp } from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the keeper sub-command. */
-export const KEEPER_USAGE =
-    'usage: k17forth keeper --config <gw.toml> [--interval <seconds>] [--i-know-this-spends-real-money]'
+export const KEEPER_USAGE = `usage: k17forth keeper --config <gw.toml> [--interval <seconds>] [--top-up <sats>] [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the first cycle that goes out (once, not every cycle);
+         the wallet of this command pays it; a cycle that halts the machine takes no top-up and the keeper drops it`
 
 /** Switch that allows a keeper on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -53,8 +58,10 @@ export function tickLine(result: TickResult): string {
         return `cycle ${result.txid} lockTime ${result.lockTime} (mtp ${
             result.mtp
         }) reward ${result.reward}${
-            result.deadManHalt ? ' (dead-man halt)' : ''
-        }${resync} -> ${result.halted ? 'halted' : result.outpoint}`
+            result.topUp ? ` top-up: ${result.topUp} sats` : ''
+        }${result.deadManHalt ? ' (dead-man halt)' : ''}${resync} -> ${
+            result.halted ? 'halted' : result.outpoint
+        }`
     if (result.skipped) return `skipped: ${result.skipped}${resync}`
     return `error: ${result.error}${resync}`
 }
@@ -70,7 +77,11 @@ export async function keeperCommand(
     io: CliIo,
     deps: KeeperCommandDeps = {}
 ): Promise<number> {
-    const parsed = parseFlags(args, ['config', 'interval'], [MAINNET_SWITCH])
+    const parsed = parseFlags(
+        args,
+        ['config', 'interval', 'top-up'],
+        [MAINNET_SWITCH]
+    )
     if (typeof parsed === 'string') {
         io.err(parsed)
         io.err(KEEPER_USAGE)
@@ -85,6 +96,12 @@ export async function keeperCommand(
     const interval = Number(intervalText)
     if (interval < 1) {
         io.err('--interval must be at least 1 second')
+        return 2
+    }
+    const topUp = parseTopUp(parsed.values.get('top-up'))
+    if (typeof topUp === 'string') {
+        io.err(topUp)
+        io.err(KEEPER_USAGE)
         return 2
     }
     let keeper: Keeper
@@ -105,8 +122,12 @@ export async function keeperCommand(
         } catch {
             throw new Error('config: [wallet] wif is not a valid key')
         }
-        keeper = new Keeper(cfg, provider, signer, deps.keeper)
-        io.out(`keeper: ${describeConfig(cfg)} interval=${interval}s`)
+        keeper = new Keeper(cfg, provider, signer, { ...deps.keeper, topUp })
+        io.out(
+            `keeper: ${describeConfig(cfg)} interval=${interval}s${
+                topUp > 0n ? ` top-up=${topUp} sats (first cycle only)` : ''
+            }`
+        )
     } catch (e) {
         io.err(hide((e as Error).message))
         return 1

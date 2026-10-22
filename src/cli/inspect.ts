@@ -230,6 +230,15 @@ export function deadManText(seconds: bigint): string {
 }
 
 /**
+ * Text that shows the escrow top-up of a cycle in the history.
+ * Input: the cycle. Output: ` top-up <sats>` when the cycle added value to
+ * the machine, else an empty string (a cycle with no top-up shows nothing).
+ */
+export function topUpNote(cycle: DecodedCycle): string {
+    return cycle.topUp > 0n ? ` top-up ${cycle.topUp}` : ''
+}
+
+/**
  * One text line that describes a cycle.
  * Input: the cycle. Output: the line.
  */
@@ -237,9 +246,9 @@ function cycleLine(cycle: DecodedCycle): string {
     if (cycle.ambiguous)
         return `${cycle.txid} lockTime ${
             cycle.lockTime
-        } ambiguous: the cycle could not be replayed, so reward and payout are not known -> ${
-            cycle.state ? `pc ${cycle.state.pc}` : 'halted'
-        }`
+        } ambiguous: the cycle could not be replayed, so reward and payout are not known${topUpNote(
+            cycle
+        )} -> ${cycle.state ? `pc ${cycle.state.pc}` : 'halted'}`
     const payout = cycle.payout
         ? ` payout ${cycle.payout.satoshis} to ${cycle.payout.addressHex}` +
           (cycle.payout.slot === undefined
@@ -249,7 +258,8 @@ function cycleLine(cycle: DecodedCycle): string {
               : ` (slot ${cycle.payout.slot})`)
         : ''
     const after = cycle.state ? `pc ${cycle.state.pc}` : 'halted'
-    return `${cycle.txid} lockTime ${cycle.lockTime} reward ${cycle.reward}${payout} -> ${after}`
+    const topUp = topUpNote(cycle)
+    return `${cycle.txid} lockTime ${cycle.lockTime} reward ${cycle.reward}${payout}${topUp} -> ${after}`
 }
 
 /**

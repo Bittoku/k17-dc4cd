@@ -80,6 +80,13 @@ export interface DecodedCycle {
      */
     tree?: CycleTree
     /**
+     * Escrow top-up (sats) that the cycle added to the machine: chunk 10 of
+     * the unlocking script. 0n when the cycle had none, when the script has
+     * no such chunk (10-chunk script of an older machine) or when it is
+     * unreadable.
+     */
+    topUp: bigint
+    /**
      * Roster tree root after the cycle (64 hex): from the next machine
      * output, or from the replayed state when the machine halted. For an
      * ambiguous halted cycle it is the root before the cycle (unknown change).
@@ -184,14 +191,17 @@ export interface UnlockingArguments {
     payoutHex: string
     /** The roster-tree proof (chunks 7 to 9); undefined for a 7-chunk (v2) script. */
     tree?: CycleTree
+    /** The escrow top-up in sats (chunk 10); 0n when the script has no such chunk. */
+    topUp: bigint
 }
 
 /**
  * Decode the unlocking script of input 0 of a cycle transaction.
  * The chunks are the arguments of `step` in order: keeper address, witness,
- * sigS, sigPad, keyA, keyB, payout, leafPre, proof, leafIndex. A script with
- * only 7 chunks comes from a v2 machine: it has no tree arguments, so `tree`
- * is undefined.
+ * sigS, sigPad, keyA, keyB, payout, leafPre, proof, leafIndex, topUp. A script
+ * with only 7 chunks comes from a v2 machine: it has no tree arguments, so `tree`
+ * is undefined. A script with 10 chunks has no `topUp` (older machine): it
+ * reads as 0n.
  * Input: the script chunks. Output: the arguments, or null when there are
  * fewer than 7 chunks or the keeper address is not 20 bytes.
  */
@@ -217,6 +227,7 @@ export function decodeUnlocking(
         keyBHex: chunkHex(chunks[5]),
         payoutHex: chunkHex(chunks[6]),
         tree,
+        topUp: chunks.length >= 11 ? chunkNumber(chunks[10]) : 0n,
     }
 }
 
@@ -285,13 +296,15 @@ function replayCycle(
                 endorseKey,
                 payoutHex: args.payoutHex || undefined,
             },
-            args.tree
+            args.tree,
+            { topUp: args.topUp }
         )
         const expected: number[] = []
         if (plan.reward > 0n) expected.push(Number(plan.reward))
         if (plan.payslot) expected.push(Number(plan.payslot.sats))
         const rest = tx.outputs.slice(1)
-        if (tx.outputs[0].satoshis !== Number(plan.remaining)) return null
+        if (tx.outputs[0].satoshis !== Number(plan.remaining + plan.topUp))
+            return null
         if (rest.length < expected.length) return null
         if (expected.some((sats, i) => rest[i].satoshis !== sats)) return null
         const reward = plan.reward > 0n ? Number(plan.reward) : 0
@@ -385,6 +398,7 @@ export async function walkHistory(
             logged: replay ? replay.logged : [],
             witness: unlocking ? decodeCells(unlocking.witnessHex) : [],
             tree: unlocking?.tree,
+            topUp: unlocking ? unlocking.topUp : 0n,
             rosterRoot: after.instance
                 ? after.instance.rosterRoot
                 : replay

@@ -46,12 +46,14 @@ import { makeProvider, makeSigner } from '../chain/provider'
 import { checkInstance, rabinKeyOf, tagOptions } from '../gateway/attester'
 import { endorseTag } from '../programs/consortium'
 import { tickLine } from './keeper'
-import { parseFlags } from './flags'
+import { parseFlags, parseTopUp } from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the endorse sub-command. */
 export const ENDORSE_USAGE = `usage: k17forth endorse --config <sponsor.toml> --member <public key hex>
-         --payout <address> --slot <n> [--i-know-this-spends-real-money]`
+         --payout <address> --slot <n> [--top-up <sats>] [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the first cycle that goes out;
+         the wallet of this command pays it`
 
 /** Switch that allows an endorsement on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -133,7 +135,7 @@ export async function endorseCommand(
 ): Promise<number> {
     const parsed = parseFlags(
         args,
-        ['config', 'member', 'payout', 'slot'],
+        ['config', 'member', 'payout', 'slot', 'top-up'],
         [MAINNET_SWITCH]
     )
     if (typeof parsed === 'string') {
@@ -144,6 +146,12 @@ export async function endorseCommand(
     const flag = (name: string) => parsed.values.get(name)
     const required = ['config', 'member', 'payout', 'slot']
     if (parsed.positional.length || required.some((n) => !flag(n))) {
+        io.err(ENDORSE_USAGE)
+        return 2
+    }
+    const topUp = parseTopUp(flag('top-up'))
+    if (typeof topUp === 'string') {
+        io.err(topUp)
         io.err(ENDORSE_USAGE)
         return 2
     }
@@ -180,7 +188,10 @@ export async function endorseCommand(
         } catch {
             throw new Error('config: [wallet] wif is not a valid key')
         }
-        const keeper = new Keeper(cfg, provider, signer, deps.keeper)
+        const keeper = new Keeper(cfg, provider, signer, {
+            ...deps.keeper,
+            topUp,
+        })
         say(`endorse: ${describeConfig(cfg)}`)
 
         // Roster slot 0 never changes, so the configured outpoint is enough.
@@ -250,7 +261,11 @@ export async function endorseCommand(
                 return 1
             }
             say(
-                `endorsed slot ${slot} txid ${result.txid} lockTime ${result.lockTime} (mtp ${result.mtp}) -> ${result.outpoint}`
+                `endorsed slot ${slot} txid ${result.txid} lockTime ${
+                    result.lockTime
+                } (mtp ${result.mtp}) -> ${result.outpoint}${
+                    result.topUp ? ` (top-up: ${result.topUp} sats)` : ''
+                }`
             )
             return 0
         }

@@ -17,7 +17,10 @@
  * exit code 1. With `[gateway] mode = "tree"` the gateway is a roster
  * member (see `src/gateway/gateway.ts`): `run` refuses to start, exit code 1,
  * when its key is not in the roster, and it saves `[machine] tip_outpoint`
- * after each relay. A mainnet config needs
+ * after each relay. `--top-up <sats>` adds sats to the machine escrow with the
+ * FIRST cycle that goes out (once, not every cycle); the wallet pays it. A
+ * halting cycle takes no top-up: it is refused, dropped, and the run goes on.
+ * A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
 
@@ -33,12 +36,14 @@ import { KeeperOptions } from '../chain/keeper'
 import { makeProvider, makeSigner } from '../chain/provider'
 import { Gateway } from '../gateway/gateway'
 import { payoutAddressOf } from '../gateway/attester'
-import { parseFlags } from './flags'
+import { parseFlags, parseTopUp } from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the gateway sub-commands. */
 export const GATEWAY_USAGE = `usage: k17forth gateway init --config <gw.toml>
-       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--i-know-this-spends-real-money]
+       k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--top-up <sats>] [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the first cycle that goes out (once, not every cycle);
+         the wallet of this command pays it; a cycle that halts the machine takes no top-up and the gateway drops it
        ([gateway] mode = "tree" in the config makes the gateway a roster member; the default is "slots")`
 
 /** Switch that allows a gateway on a mainnet machine. */
@@ -154,7 +159,7 @@ async function runGateway(
 ): Promise<number> {
     const parsed = parseFlags(
         args,
-        ['config', 'interval'],
+        ['config', 'interval', 'top-up'],
         [MAINNET_SWITCH, 'once']
     )
     if (typeof parsed === 'string') {
@@ -171,6 +176,12 @@ async function runGateway(
     const interval = Number(intervalText)
     if (interval < 1) {
         io.err('--interval must be at least 1 second')
+        return 2
+    }
+    const topUp = parseTopUp(parsed.values.get('top-up'))
+    if (typeof topUp === 'string') {
+        io.err(topUp)
+        io.err(GATEWAY_USAGE)
         return 2
     }
     let gateway: Gateway
@@ -193,7 +204,7 @@ async function runGateway(
         }
         gateway = new Gateway(cfg, provider, signer, {
             bridge: deps.bridge,
-            keeper: deps.keeper,
+            keeper: { ...deps.keeper, topUp },
             now: deps.now,
             intervalMs: interval * 1000,
             out: (line) => io.out(hide(line)),
@@ -203,7 +214,9 @@ async function runGateway(
         io.out(
             `gateway: ${describeConfig(cfg)} bridge=${
                 deps.bridge ? 'given' : cfg.serial ?? 'stdin'
-            } interval=${interval}s`
+            } interval=${interval}s${
+                topUp > 0n ? ` top-up=${topUp} sats (first cycle only)` : ''
+            }`
         )
     } catch (e) {
         io.err(hide((e as Error).message))

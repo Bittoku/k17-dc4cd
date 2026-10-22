@@ -3,7 +3,7 @@
  * one cycle at a time through the k17-vm keeper helpers, verifying every
  * cycle with the bundled Bitcoin script interpreter.
  */
-import { bsv, toByteString } from 'scrypt-ts'
+import { bsv } from 'scrypt-ts'
 import { RabinSig } from 'scrypt-ts-lib'
 import {
     K17Machine,
@@ -11,12 +11,14 @@ import {
     CyclePlan,
     CycleTree,
     NO_SIG,
+    PlanOptions,
     Roster,
     addrOf,
     bindCycleBuilder,
     newMachine,
     planCycle,
     rosterOf,
+    stepArgs,
 } from 'k17-vm'
 import { getDefaultSigner, randomPrivateKey } from './txHelper'
 
@@ -73,9 +75,10 @@ export interface CycleResult {
  * interpreter, and return the next instance (undefined once halted).
  * Input: instance, its UTXO value, nLockTime, witness cells, the cycle's
  * Rabin signature, the ATTEST/ENDORSE keys and payout (CycleKeys), and the
- * cycle's roster-tree proof (CycleTree, only for cycles that run MEMBER).
- * The plan's leafPre, proof and leafIndex go to `step` as its last three
- * arguments ('', '' and 0n when the cycle has no tree proof).
+ * cycle's roster-tree proof (CycleTree, only for cycles that run MEMBER), and
+ * the plan options (`{ topUp }`: the escrow top-up in sats, paid by the
+ * test signer).
+ * `stepArgs(plan, keeper)` gives the 11 arguments of `step`.
  * Output: the plan, the transaction and the next instance.
  */
 export async function cycle(
@@ -85,21 +88,23 @@ export async function cycle(
     witness: bigint[] = [],
     sig: RabinSig = NO_SIG,
     keys: CycleKeys = {},
-    tree?: CycleTree
+    tree?: CycleTree,
+    options: PlanOptions = {}
 ): Promise<CycleResult> {
-    const plan = planCycle(m, value, lockTime, keeper, witness, sig, keys, tree)
+    const plan = planCycle(
+        m,
+        value,
+        lockTime,
+        keeper,
+        witness,
+        sig,
+        keys,
+        tree,
+        options
+    )
     const opts = bindCycleBuilder(m, plan, keeper, lockTime)
     const { tx, atInputIndex } = await m.methods.step(
-        addrOf(keeper),
-        toByteString(plan.witnessHex),
-        plan.sig.s,
-        toByteString(plan.sig.padding),
-        toByteString(plan.keyAHex),
-        toByteString(plan.keyBHex),
-        toByteString(plan.payoutHex),
-        toByteString(plan.leafPre),
-        toByteString(plan.proof),
-        plan.leafIndex,
+        ...stepArgs(plan, keeper),
         opts
     )
     const verdict = tx.verifyInputScript(atInputIndex)

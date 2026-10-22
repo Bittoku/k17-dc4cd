@@ -63,16 +63,18 @@ import { makeProvider, makeSigner } from '../chain/provider'
 import { RosterMirror } from '../chain/roster'
 import { checkInstance, rabinKeyOf } from '../gateway/attester'
 import { ADMIT_TAG, REMOVE_TAG } from '../programs/treeConsortium'
-import { parseFlags } from './flags'
+import { parseFlags, parseTopUp } from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the admit sub-command. */
 export const ADMIT_USAGE = `usage: k17forth admit <sponsor.toml> --member-key <pubkey file> --payout <address>
-         [--index <n>] [--i-know-this-spends-real-money]`
+         [--index <n>] [--top-up <sats>] [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it`
 
 /** Help text of the remove sub-command. */
 export const REMOVE_USAGE = `usage: k17forth remove <sponsor.toml> (--member-key <pubkey file> | --index <n>)
-         [--i-know-this-spends-real-money]`
+         [--top-up <sats>] [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it`
 
 /** Switch that allows an admin cycle on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -312,8 +314,8 @@ async function sponsorCommand(
     const parsed = parseFlags(
         args,
         kind === 'admit'
-            ? ['member-key', 'payout', 'index']
-            : ['member-key', 'index'],
+            ? ['member-key', 'payout', 'index', 'top-up']
+            : ['member-key', 'index', 'top-up'],
         [MAINNET_SWITCH]
     )
     if (typeof parsed === 'string') {
@@ -328,6 +330,12 @@ async function sponsorCommand(
             ? !flag('member-key') || !flag('payout')
             : !!flag('member-key') === !!flag('index'))
     if (bad) {
+        io.err(usage)
+        return 2
+    }
+    const topUp = parseTopUp(flag('top-up'))
+    if (typeof topUp === 'string') {
+        io.err(topUp)
         io.err(usage)
         return 2
     }
@@ -360,7 +368,10 @@ async function sponsorCommand(
         } catch {
             throw new Error('config: [wallet] wif is not a valid key')
         }
-        const keeper = new Keeper(cfg, provider, signer, deps.keeper)
+        const keeper = new Keeper(cfg, provider, signer, {
+            ...deps.keeper,
+            topUp,
+        })
         const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
         say(`${kind}: ${describeConfig(cfg)}`)
 
@@ -515,7 +526,13 @@ async function sponsorCommand(
                 )
             if (result.outpoint) saveTipOutpoint(configPath, result.outpoint)
             say(
-                `${operation.done} leaf ${operation.index} txid ${result.txid} lockTime ${result.lockTime} (mtp ${result.mtp}) rosterSeq ${after.rosterSeq} rosterRoot ${after.rosterRoot} -> ${result.outpoint}`
+                `${operation.done} leaf ${operation.index} txid ${
+                    result.txid
+                } lockTime ${result.lockTime} (mtp ${result.mtp}) rosterSeq ${
+                    after.rosterSeq
+                } rosterRoot ${after.rosterRoot} -> ${result.outpoint}${
+                    result.topUp ? ` (top-up: ${result.topUp} sats)` : ''
+                }`
             )
             return 0
         }

@@ -38,6 +38,7 @@ held write-up belong here.
   they get the same policy: a lead cycle before the endorsement makes `endorse` report
   `waiting for MTP` until the next block. A halting cycle (fault, HALT, dead-man) is exempt.
   `TickResult.deadManHalt` and the keeper log line ("dead-man halt") report a dead-man refund.
+- Escrow top-up: `--top-up <sats>` on `keeper`, `gateway run`, `admit`, `remove` and `endorse` sets `KeeperOptions.topUp`. `Keeper` keeps it as a pending amount and puts it on the FIRST cycle that goes out (`planCycle(..., { topUp })`; the wallet pays it through autoPayfee); later cycles carry 0, in the long-running loops too. A halting cycle takes no top-up: the planner throws, the tick returns `topUpRefused` with an error, nothing is broadcast, and the pending top-up is dropped so the next tick can still halt the machine. `TickResult.topUp` and `tickLine` (`top-up: N sats`) report it; `DecodedCycle.topUp` and the `inspect --history` line (`top-up N`) show it.
 - `deploy --dead-man <seconds>` sets the immutable dead-man interval (0 = off; otherwise at least
   `DEAD_MAN_FLOOR`, 6 h). Use 30 days for daily rounds. `inspect` prints it (`dead-man: off`).
 - `makeProvider` lists coins from WhatsOnChain `confirmed/unspent` + `unconfirmed/unspent` and
@@ -46,9 +47,9 @@ held write-up belong here.
 - WhatsOnChain answers 429 and "Not Found" (just after a broadcast) are transient: retry them
   (`retryOn429`, `withRetry`). scrypt-ts providers leave their connection check rejection
   unhandled; the CLI turns "connect failed" into a warning.
-- `K17Machine.step` has 10 parameters (the last three are `leafPre`, `proof`, `leafIndex`), and the history
-  decoder (`decodeUnlocking` in `src/chain/history.ts`) reads 10 unlocking-script chunks. Pass all three
-  from the `CyclePlan`; 7-chunk scripts come from v2 machines and replay as `ambiguous`. Pre-v3.1 machines do not
+- `K17Machine.step` has 11 parameters (the last four are `leafPre`, `proof`, `leafIndex`, `topUp`), and the history
+  decoder (`decodeUnlocking` in `src/chain/history.ts`) reads 11 unlocking-script chunks (a 10-chunk script reads
+  as `topUp` 0). Build the arguments with `stepArgs(plan, keeper)` from k17-vm, never by hand; 7-chunk scripts come from v2 machines and replay as `ambiguous`. Pre-v3.1 machines do not
   decode under the v3.1 artifact (`fromLockingScript` gives TEMPLATE_MISMATCH); the `deadMan` field
   changed the script.
 - `admit` and `remove` (tree-mode sponsor) load the roster with `loadRoster` (`src/chain/loadRoster.ts`: genesis inscription + `walkHistory`, checked against the tip's root and seq) and pass the proof through `PendingInput.tree` to `Keeper.tick`. They reload and re-sign once when another cycle lands first, and save `[machine] tip_outpoint` after a relay. `startOutpoint(cfg)` (`tip_outpoint ?? outpoint`) is where every forward-follow starts; `Keeper` uses it, so `keeper` and `gateway` follow from the saved tip too (`admit`, `remove` and the tree-mode gateway write it after a relay).

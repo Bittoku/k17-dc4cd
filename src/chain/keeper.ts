@@ -28,18 +28,18 @@
  * No result or error text contains the wallet key or the Rabin primes.
  */
 
-import { Provider, Signer, bsv, toByteString } from 'scrypt-ts'
+import { Provider, Signer, bsv } from 'scrypt-ts'
 import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
 import {
     CycleTree,
     K17Machine,
     NO_SIG,
-    addrOf,
     assertChangeOutput,
     bindCycleBuilder,
     outputLog,
     planCycle,
     stateOf,
+    stepArgs,
 } from 'k17-vm'
 import { GatewayConfig, hideSecrets, startOutpoint } from './config'
 import { ChainInfo, FetchLike, chainInfo, wocFetch } from './provider'
@@ -82,6 +82,18 @@ export interface TickResult {
     /** Satoshis paid to the keeper. */
     reward?: bigint
     /**
+     * Escrow top-up (sats) that this cycle added to the machine. Set only
+     * when a cycle was broadcast with a top-up above 0.
+     */
+    topUp?: bigint
+    /**
+     * True when the keeper refused a pending top-up because the planned
+     * cycle halts the machine (a halting cycle takes no top-up). Nothing was
+     * broadcast and the keeper dropped the top-up, so the next tick plans
+     * the halting cycle without it. Set together with `error`.
+     */
+    topUpRefused?: boolean
+    /**
      * True when the cycle was a dead-man halt (v3.1): the machine passed its
      * dead-man interval, so the cycle refunded the beneficiary without
      * running the program. Implies `halted`. Set only when a cycle was
@@ -117,6 +129,13 @@ export interface KeeperOptions {
     spentBy?: (outpoint: Outpoint) => Promise<string | undefined>
     /** Fetch function for the default WhatsOnChain calls. */
     fetch?: FetchLike
+    /**
+     * Escrow top-up in sats (default 0). It rides on the FIRST cycle that
+     * goes out, paid from the signer's own coins; later cycles carry 0.
+     * When the planned cycle halts the machine, the tick is refused with
+     * `topUpRefused` and the top-up is dropped.
+     */
+    topUp?: bigint
 }
 
 /** The provider calls the keeper uses. */
@@ -242,6 +261,8 @@ export class Keeper {
     private readonly start: Outpoint
     private current?: Current
     private halted = false
+    /** Top-up (sats) that the next cycle to go out carries; 0 when none. */
+    private pendingTopUp: bigint
     private readonly cfg: GatewayConfig
     private readonly readChain: () => Promise<ChainInfo>
     private readonly spentBy: (
@@ -264,6 +285,9 @@ export class Keeper {
         if (!start) throw new Error('config: [machine] outpoint is required')
         this.start = parseOutpoint(start)
         this.cfg = cfg
+        this.pendingTopUp = options.topUp ?? 0n
+        if (this.pendingTopUp < 0n)
+            throw new RangeError('topUp must not be negative')
         this.readChain =
             options.chainInfo ?? (() => chainInfo(cfg.network, options.fetch))
         this.spentBy =
@@ -475,10 +499,24 @@ export class Keeper {
                     endorseKey: input?.endorseKey,
                     payoutHex: input?.payoutHex,
                 },
-                input?.tree
+                input?.tree,
+                { topUp: this.pendingTopUp }
             )
         } catch (e) {
             const message = messageOf(e)
+            // A halting cycle takes no top-up: refuse before any broadcast
+            // and drop the top-up so the next tick can halt the machine.
+            if (/halting cycle takes no top-up/.test(message)) {
+                const dropped = this.pendingTopUp
+                this.pendingTopUp = 0n
+                return {
+                    result: {
+                        mtp,
+                        topUpRefused: true,
+                        error: `top-up of ${dropped} sats refused: this cycle halts the machine, and a halting cycle takes no top-up (top-up dropped, nothing sent)`,
+                    },
+                }
+            }
             if (/needs a witness/.test(message))
                 return { result: { mtp, skipped: 'needs witness' } }
             // The chain clock has not advanced MIN_STEP past lastTime yet.
@@ -490,22 +528,15 @@ export class Keeper {
             await m.connect(this.signer)
             const options = bindCycleBuilder(m, plan, keeper, BigInt(lockTime))
             const { tx } = await m.methods.step(
-                addrOf(keeper),
-                toByteString(plan.witnessHex),
-                plan.sig.s,
-                toByteString(plan.sig.padding),
-                toByteString(plan.keyAHex),
-                toByteString(plan.keyBHex),
-                toByteString(plan.payoutHex),
-                toByteString(plan.leafPre),
-                toByteString(plan.proof),
-                plan.leafIndex,
+                ...stepArgs(plan, keeper),
                 // scrypt-ts adds the fee inputs and the change output and
                 // signs, but does not broadcast; `broadcastCycle` checks the
                 // change output and then sends.
                 { ...options, partiallySigned: true }
             )
             await broadcastCycle(this.provider, tx)
+            // The top-up went out with this cycle; later cycles carry 0.
+            this.pendingTopUp = 0n
             const logged = outputLog(plan.nextState).slice(
                 outputLog(stateOf(m)).length
             )
@@ -520,6 +551,7 @@ export class Keeper {
                     lockTime,
                     mtp,
                     reward: plan.reward,
+                    ...(plan.topUp > 0n ? { topUp: plan.topUp } : {}),
                     logged,
                     halted: plan.halted,
                     ...(plan.deadManHalt ? { deadManHalt: true } : {}),

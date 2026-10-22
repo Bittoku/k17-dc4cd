@@ -46,3 +46,28 @@ export function parseFlags(
     }
     return parsed
 }
+
+/** Largest top-up the tools accept: 21 million coins, in satoshis. */
+export const MAX_TOP_UP_SATS = 2_100_000_000_000_000n
+
+/**
+ * Read the value of a `--top-up` flag.
+ * Input: the flag text, or undefined when the flag is absent.
+ * Output: the top-up in satoshis (0n when the flag is absent), or a text
+ * that says what is wrong: the value must be a non-negative whole number
+ * of satoshis (digits only, no sign, no decimals, no unit) and at most
+ * `MAX_TOP_UP_SATS`.
+ */
+export function parseTopUp(text: string | undefined): bigint | string {
+    if (text === undefined) return 0n
+    if (!/^\d+$/.test(text))
+        return `--top-up must be a whole number of satoshis (0 or more), not "${text}"`
+    const sats = BigInt(text)
+    if (sats > MAX_TOP_UP_SATS)
+        return `--top-up is too large (most ${MAX_TOP_UP_SATS} satoshis)`
+    return sats
+}
+
+/** Help line for the `--top-up` flag, shared by the commands that send a cycle. */
+export const TOP_UP_HELP =
+    '--top-up <sats>: add sats to the machine escrow with the first cycle that goes out, paid from the wallet of this command; later cycles add nothing; refused when that cycle halts the machine'

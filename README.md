@@ -11,6 +11,10 @@ its state from hop to hop. The chain supplies what the radio did not — signed
 readings, ordering, replay protection, payment for whoever relays, and an audit
 trail — at the price of block latency and transaction fees.
 
+## Architecture
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the components, how to build your own machine, how gateways join and leave, and the security model.
+
 ## Contents
 
 | Path                              | What                                                                                                                                                                                                                                                                     |

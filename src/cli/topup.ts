@@ -5,7 +5,7 @@
  * - `topup offer <funder.toml> --machine <outpoint> --amount <sats>`
  *   (funder): finds or makes a coin of exactly `amount` sats on the funder's
  *   P2PKH key and writes `offer.json` (coin, amount, funder public key, the
- *   instance id read from the machine, network).
+ *   machine outpoint, the instance id read from the machine, network).
  * - A cycle command with `--top-up-offer offer.json` (keeper: `admit`,
  *   `remove`, `endorse`) builds the final cycle with the coin as an input
  *   and writes `topup-request.json`. Nothing is broadcast.
@@ -260,6 +260,7 @@ async function offerCommand(
         version: TOPUP_FILE_VERSION,
         network: cfg.network,
         instanceId: machine.instanceId.toLowerCase(),
+        machine: machineOutpoint,
         coin: coin.outpoint,
         amount: amount.toString(),
         funderPubKey: (await signer.getDefaultPubKey()).toString(),
@@ -325,7 +326,7 @@ async function signCommand(
         unlockingScript,
     })
     io.out(
-        `checked: machine ${request.machinePrevout} is the unspent tip of instance ${offer.instanceId}, the cycle tops it up by ${offer.amount} sats, the machine input passes the script interpreter, and coin ${offer.coin} is input ${request.funderInputIndex} only`
+        `checked: input 0 spends ${request.machinePrevout}, the unspent tip of the machine named in the offer (${offer.machine}); the replay gives the next machine ${offer.amount} sats more than without a top-up; the machine input passes the script interpreter; coin ${offer.coin} is input ${request.funderInputIndex} and no other input is on this funder's key`
     )
     io.out(`signature written to ${out}. Give it to the keeper.`)
     return 0
@@ -334,7 +335,8 @@ async function signCommand(
 /**
  * `topup complete`: insert the funder signature, check and broadcast.
  * Input: arguments after `complete`, output sink and test parts.
- * Output: exit code 0; throws OfferExpired or a TopUpRefusal (exit 1).
+ * Output: exit code 0, also when the same cycle is on the chain already
+ * (then nothing is sent); throws OfferExpired or a TopUpRefusal (exit 1).
  */
 async function completeCommand(
     args: string[],
@@ -349,13 +351,21 @@ async function completeCommand(
     const provider = deps.provider ?? makeProvider(request.network)
     const spentBy =
         deps.spentBy ?? ((op) => wocSpentBy(request.network, op, deps.fetch))
-    const { tx, machineValue } = await completeRequest(request, signature, {
-        source: provider,
-        spentBy,
-        send: (t) => provider.sendTransaction(t),
-    })
+    const { tx, machineValue, alreadySent } = await completeRequest(
+        request,
+        signature,
+        {
+            source: provider,
+            spentBy,
+            send: (t) => provider.sendTransaction(t),
+        }
+    )
     io.out(
-        `top-up cycle sent: txid ${tx.id}, top-up ${request.amount} sats, new machine value ${machineValue} sats -> ${tx.id}:0`
+        `top-up cycle ${
+            alreadySent ? 'is on the chain already (nothing sent now)' : 'sent'
+        }: txid ${tx.id}, top-up ${
+            request.amount
+        } sats, new machine value ${machineValue} sats -> ${tx.id}:0`
     )
     return 0
 }

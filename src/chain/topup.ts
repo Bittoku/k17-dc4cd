@@ -5,8 +5,8 @@
  * The flow has three files. Each is plain JSON and holds no private key.
  *
  * 1. Offer (`topup offer`, funder): a coin of exactly `amount` sats on the
- *    funder's P2PKH key, the funder public key, the machine instance id and
- *    the network.
+ *    funder's P2PKH key, the funder public key, the machine outpoint the
+ *    funder named, the machine instance id and the network.
  * 2. Request (a cycle command with `--top-up-offer`, keeper): the final cycle
  *    transaction with the offered coin as an input and `topUp = amount` on
  *    the machine input. The keeper signs all of its own inputs; only the
@@ -26,11 +26,16 @@
  *   nothing is built again between them.
  * - A request is stale when the machine prevout is spent (checked by the
  *   machine tip, not by a clock).
- * - The funder trusts nothing in the request. It reads the machine prevout
- *   and its own coin from the chain provider, checks the `topUp` argument
- *   and runs the script interpreter on the machine input against the real
- *   prevout. The covenant then forces output 0 to `remaining + topUp`, so
- *   the funder does not replay planCycle.
+ * - The funder trusts nothing in the request. It follows the machine it
+ *   named from its own outpoint to the unspent tip (an equal instance id is
+ *   not enough: anyone can deploy a machine with a copied id), reads every
+ *   prevout and its own coin from the chain provider, refuses a second
+ *   input on its key, checks that the machine unlocking script is push-only
+ *   with exactly the step ABI pushes, runs the script interpreter on the
+ *   machine input against the real prevout, and replays the cycle with
+ *   planCycle to check output 0 exactly.
+ * - `complete` treats a machine prevout that this same transaction spends
+ *   as success (already sent), never as an expired offer.
  *
  * Exports: the file types and their readers (`readOffer`, `readRequest`,
  * `readSignature`), `offerCoin`, `requestIdOf`, `buildFundedCycle`,
@@ -41,10 +46,16 @@
 
 import { createHash } from 'crypto'
 import { Signer, bsv } from 'scrypt-ts'
-import { CyclePlan, FunderInput, K17Machine, sendCycle } from 'k17-vm'
+import { CyclePlan, FunderInput, K17Machine, buildFundedCycleTx } from 'k17-vm'
 import type { NetworkName } from './config'
-import { Outpoint, TxSource, decodeUnlocking, parseOutpoint } from './history'
-import { decodeMachine } from './decode'
+import {
+    Outpoint,
+    TxSource,
+    decodeUnlocking,
+    parseOutpoint,
+    planFromUnlocking,
+} from './history'
+import { decodeInstance, decodeMachine } from './decode'
 
 /** `kind` of an offer file. */
 export const OFFER_KIND = 'k17-topup-offer'
@@ -66,6 +77,12 @@ export interface TopUpOffer {
     network: NetworkName
     /** Instance id of the machine (64 hex), read from the chain. */
     instanceId: string
+    /**
+     * The machine outpoint the funder named (`--machine`), `txid:vout`. The
+     * funder follows spends forward from here to the tip before it signs,
+     * so the top-up can only go to this machine's lineage.
+     */
+    machine: string
     /** Coin outpoint, `txid:vout`. The coin is P2PKH on `funderPubKey`. */
     coin: string
     /** Value of the coin and size of the top-up, in sats (decimal text). */
@@ -213,6 +230,7 @@ export function readOffer(text: string, what = 'offer'): TopUpOffer {
         version: TOPUP_FILE_VERSION,
         network: field(obj, 'network', NETWORK, what) as NetworkName,
         instanceId: field(obj, 'instanceId', HEX64, what),
+        machine: field(obj, 'machine', OUTPOINT, what),
         coin: field(obj, 'coin', OUTPOINT, what),
         amount: field(obj, 'amount', SATS, what),
         funderPubKey: field(obj, 'funderPubKey', PUBKEY, what),
@@ -311,13 +329,6 @@ function inputsSpending(tx: bsv.Transaction, outpoint: string): number[] {
         .filter((i) => i >= 0)
 }
 
-/** Thrown inside the funder callback of sendCycle to stop it there. */
-class Captured extends Error {
-    constructor(readonly tx: bsv.Transaction, readonly index: number) {
-        super('captured for the funder')
-    }
-}
-
 /** A funded cycle that waits for the funder's signature. */
 export interface FundedCycle {
     /** The final transaction; the funder input has an empty script. */
@@ -330,16 +341,16 @@ export interface FundedCycle {
 
 /**
  * Build the final cycle transaction with the offered coin as an input,
- * and stop before the funder signs.
- * It runs k17-vm `sendCycle` with `funding` and no broadcast. sendCycle
- * checks the transaction (output 0 holds remaining + topUp, a change output,
- * the machine input passes the interpreter) and then calls the funder
- * callback; this callback keeps the transaction and stops sendCycle.
+ * without the funder's signature.
+ * It calls k17-vm `buildFundedCycleTx`: the keeper's signer signs the
+ * machine input and its own fee inputs, the funder input stays empty, and
+ * the pre-sign checks run (output 0 holds remaining + topUp, a change
+ * output, the machine input passes the interpreter). Nothing is broadcast.
  * Input: the machine (connected to the keeper's signer), the plan (its
  * topUp must equal the coin value), the keeper address, the lock time and
  * the coin. Output: the transaction and the two input indices. Throws when
- * sendCycle refuses the transaction, and when the coin is an input more
- * than once (the keeper wallet holds the same key as the funder).
+ * k17-vm refuses the transaction, and when the coin is an input more than
+ * once (the keeper wallet holds the same key as the funder).
  */
 export async function buildFundedCycle(
     m: K17Machine,
@@ -348,37 +359,52 @@ export async function buildFundedCycle(
     lockTime: bigint,
     coin: FunderInput
 ): Promise<FundedCycle> {
-    let captured: Captured | undefined
-    try {
-        await sendCycle(m, plan, keeper, lockTime, {
-            broadcast: false,
-            funding: {
-                inputs: [coin],
-                sign: (tx, index) => {
-                    throw new Captured(tx, index)
-                },
-            },
-        })
-    } catch (e) {
-        if (!(e instanceof Captured)) throw e
-        captured = e
-    }
-    if (!captured)
-        throw new Error('the cycle was built without the funder input')
-    const { tx, index } = captured
+    const built = await buildFundedCycleTx(m, plan, keeper, lockTime, [coin])
     const coinOutpoint = `${coin.txId}:${coin.outputIndex}`
-    if (inputsSpending(tx, coinOutpoint).length !== 1)
+    if (inputsSpending(built.tx, coinOutpoint).length !== 1)
         throw new Error(
             'the offered coin is an input more than once (the keeper wallet holds the funder key?); no request written'
         )
-    return { tx, machineInputIndex: 0, funderInputIndex: index }
+    return {
+        tx: built.tx,
+        machineInputIndex: built.atInputIndex,
+        funderInputIndex: built.funderInputIndices[0],
+    }
+}
+
+/**
+ * Read one transaction from the chain.
+ * Input: a transaction source, the txid and a name for messages.
+ * Output: the transaction. Throws a TopUpRefusal when it cannot be read, or
+ * when the provider answers with a transaction of another id.
+ */
+async function chainTx(
+    source: TxSource,
+    txid: string,
+    what: string
+): Promise<bsv.Transaction> {
+    let tx: bsv.Transaction
+    try {
+        tx = await source.getTransaction(txid)
+    } catch (e) {
+        throw new TopUpRefusal(
+            `${what} ${txid}: cannot read it from the chain (${
+                (e as Error).message
+            })`
+        )
+    }
+    if (tx.id !== txid)
+        throw new TopUpRefusal(
+            `${what} ${txid}: the provider returned another transaction`
+        )
+    return tx
 }
 
 /**
  * Read one output of a transaction from the chain.
  * Input: a transaction source, the outpoint and a name for messages.
  * Output: the output. Throws a TopUpRefusal when the transaction cannot be
- * read or has no such output.
+ * read, is not the one asked for, or has no such output.
  */
 async function chainOutput(
     source: TxSource,
@@ -386,26 +412,32 @@ async function chainOutput(
     what: string
 ): Promise<bsv.Transaction.Output> {
     const { txid, vout } = parseOutpoint(outpoint)
-    let tx: bsv.Transaction
-    try {
-        tx = await source.getTransaction(txid)
-    } catch (e) {
-        throw new TopUpRefusal(
-            `${what} ${outpoint}: cannot read it from the chain (${
-                (e as Error).message
-            })`
-        )
-    }
-    const output = tx.outputs[vout]
+    const output = (await chainTx(source, txid, what)).outputs[vout]
     if (!output) throw new TopUpRefusal(`${what} ${outpoint} does not exist`)
     return output
 }
 
 /**
- * Run the script interpreter on one input.
- * Input: the transaction, the input index and the real prevout output.
- * Output: none; the input gets the prevout. Throws a TopUpRefusal that
- * names the input when the script fails.
+ * Interpreter flags of every check here: the library defaults (FORKID,
+ * CLEANSTACK, MINIMALDATA, STRICTENC, LOW_S, NULLFAIL and more) plus
+ * SIGPUSHONLY, so an unlocking script with any opcode other than a push
+ * fails.
+ */
+const VERIFY_FLAGS = (() => {
+    const flags = bsv.Script.Interpreter as unknown as Record<string, number>
+    return (
+        flags.DEFAULT_FLAGS |
+        flags.SCRIPT_VERIFY_SIGPUSHONLY |
+        flags.SCRIPT_VERIFY_CLEANSTACK |
+        flags.SCRIPT_ENABLE_SIGHASH_FORKID
+    )
+})()
+
+/**
+ * Run the script interpreter on one input with VERIFY_FLAGS.
+ * Input: the transaction, the input index, the real prevout output and a
+ * name for messages. Output: none; the input gets the prevout. Throws a
+ * TopUpRefusal that names the input when the script fails.
  */
 function verifyInput(
     tx: bsv.Transaction,
@@ -413,20 +445,125 @@ function verifyInput(
     prevout: bsv.Transaction.Output,
     what: string
 ): void {
-    tx.inputs[index].output = new bsv.Transaction.Output({
+    const output = new bsv.Transaction.Output({
         script: prevout.script,
         satoshis: prevout.satoshis,
     })
-    let verdict: { success: boolean; error: string }
-    try {
-        verdict = tx.verifyInputScript(index)
-    } catch (e) {
-        verdict = { success: false, error: (e as Error).message }
+    tx.inputs[index].output = output
+    // The K17 scripts are far above the library's default limits; the
+    // library's own Input.verify lifts them the same way.
+    const Interp = bsv.Script.Interpreter as unknown as {
+        MAX_SCRIPT_ELEMENT_SIZE: number
+        MAXIMUM_ELEMENT_SIZE: number
     }
-    if (!verdict.success)
-        throw new TopUpRefusal(
-            `${what} (input ${index}) fails the script interpreter: ${verdict.error}`
+    Interp.MAX_SCRIPT_ELEMENT_SIZE = Number.MAX_SAFE_INTEGER
+    Interp.MAXIMUM_ELEMENT_SIZE = Number.MAX_SAFE_INTEGER
+    const interpreter = new bsv.Script.Interpreter()
+    let ok = false
+    let error = ''
+    try {
+        ok = interpreter.verify(
+            tx.inputs[index].script,
+            output.script,
+            tx,
+            index,
+            VERIFY_FLAGS,
+            new bsv.crypto.BN(output.satoshis)
         )
+        error = interpreter.errstr
+    } catch (e) {
+        error = (e as Error).message
+    }
+    if (!ok)
+        throw new TopUpRefusal(
+            `${what} (input ${index}) fails the script interpreter: ${error}`
+        )
+}
+
+/**
+ * Number of unlocking-script pushes of `K17Machine.step`: the 11 `step`
+ * arguments and the hidden scrypt-ts arguments (preimage, change amount,
+ * change address, prevouts), read from the artifact's ABI. The contract
+ * has one public method, so there is no method selector push.
+ */
+function stepChunkCount(): number {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const artifact = require('k17-vm/artifacts/k17Machine.json') as {
+        abi: { type: string; name: string; params: unknown[] }[]
+    }
+    const methods = artifact.abi.filter((f) => f.type === 'function')
+    if (methods.length !== 1 || methods[0].name !== 'step')
+        throw new Error('K17Machine artifact: expected one public method, step')
+    return methods[0].params.length
+}
+
+/**
+ * Check the form of the machine input's unlocking script before any
+ * decoder reads it: only pushes, each in its minimal form, and exactly the
+ * number of pushes of the `step` ABI. A script that a naive decoder reads
+ * one way and the interpreter runs another way is refused here.
+ * Input: the unlocking script. Output: none. Throws a TopUpRefusal.
+ */
+function checkStepUnlocking(script: bsv.Script): void {
+    if (!script.isPushOnly())
+        throw new TopUpRefusal(
+            'the machine input unlocking script is not push-only'
+        )
+    const want = stepChunkCount()
+    if (script.chunks.length !== want)
+        throw new TopUpRefusal(
+            `the machine input unlocking script has ${script.chunks.length} pushes, the step ABI has ${want}`
+        )
+    const minimal = script as unknown as {
+        checkMinimalPush(i: number): boolean
+    }
+    for (let i = 0; i < script.chunks.length; i++)
+        if (!minimal.checkMinimalPush(i))
+            throw new TopUpRefusal(
+                `the machine input unlocking script push ${i} is not minimal`
+            )
+}
+
+/** Most cycles the funder follows from the offer's machine outpoint. */
+const MAX_FOLLOW_HOPS = 10_000
+
+/**
+ * Follow a machine forward from an outpoint to its unspent tip: each cycle
+ * spends the machine at input 0 and makes the next one at output 0.
+ * Input: the outpoint the funder named, and the chain.
+ * Output: the tip outpoint `txid:vout`. Throws a TopUpRefusal when the
+ * spends lookup fails, when a spend is not a cycle of this machine (the
+ * machine ended, or input 0 does not spend it), or after MAX_FOLLOW_HOPS.
+ */
+async function followToTip(start: string, chain: FunderChain): Promise<string> {
+    let op = start
+    for (let hop = 0; hop < MAX_FOLLOW_HOPS; hop++) {
+        let spender: string | undefined
+        try {
+            spender = await chain.spentBy(parseOutpoint(op))
+        } catch (e) {
+            throw new TopUpRefusal(
+                `cannot follow the machine named in the offer from ${op}: ${
+                    (e as Error).message
+                }`
+            )
+        }
+        if (spender === undefined) return op
+        const tx = await chainTx(chain.source, spender, 'spending transaction')
+        const next = tx.outputs[0]
+        if (
+            prevoutOf(tx.inputs[0]) !== op ||
+            !next ||
+            !decodeMachine(next.script.toHex()).machine
+        )
+            throw new TopUpRefusal(
+                `the machine named in the offer ended at ${spender}; nothing to top up`
+            )
+        op = `${spender}:0`
+    }
+    throw new TopUpRefusal(
+        `the machine named in the offer has more than ${MAX_FOLLOW_HOPS} cycles to follow`
+    )
 }
 
 /** What the funder reads from the chain. */
@@ -439,19 +576,28 @@ export interface FunderChain {
 
 /**
  * The funder's checks of a request, all on data the funder reads itself.
- * Checks, in order:
- * - the request and the offer agree on network, instance id, coin and
- *   amount, and the offer is for the funder's own key;
- * - (a) the machine prevout (read from the transaction itself, input 0) is
- *   unspent, is a K17 machine and has the offer's instance id;
- * - (b) the machine input's unlocking script decodes and its `topUp`
- *   equals the offer amount; the coin on the chain holds exactly the amount
- *   on the funder's P2PKH script;
- * - (d) the coin is an input exactly once, at the stated index, with an
- *   empty unlocking script, and the coin is unspent;
- * - (c) last, the machine input passes the script interpreter against the
- *   real prevout script and value (the covenant then pins output 0 to
- *   remaining + topUp and every other output).
+ * Checks, in order (each refusal names its own reason):
+ * 1. the request and the offer agree on network, instance id, coin and
+ *    amount, and the offer is for the funder's own key;
+ * 2. input 0 spends a K17 machine with the offer's instance id;
+ * 3. following spends forward from the machine outpoint named in the offer
+ *    reaches an unspent tip, and that tip is input 0's prevout (a machine
+ *    with a copied instance id is a different lineage and is refused);
+ * 4. the coin is an input exactly once, at the stated index, with an empty
+ *    unlocking script;
+ * 5. every input's prevout is read from the chain; no input other than the
+ *    stated one locks to the funder's P2PKH script, and every input other
+ *    than the machine is P2PKH;
+ * 6. the machine input's unlocking script is push-only, minimal, and has
+ *    exactly the pushes of the step ABI; its `topUp` argument equals the
+ *    amount;
+ * 7. the coin on the chain holds exactly the amount on the funder's script,
+ *    and nothing spends it yet;
+ * 8. the machine input passes the script interpreter (with SIGPUSHONLY,
+ *    CLEANSTACK and FORKID) against the real prevout;
+ * 9. an exact replay: planCycle from the decoded arguments and the real
+ *    prevout state gives a live cycle whose output 0 is the next machine
+ *    with remaining + amount, exactly as in the transaction.
  * Input: the request, the funder's own offer, the funder's public key and
  * the chain. Output: the transaction, ready for `signFunderInput`. Throws a
  * TopUpRefusal with a clear reason on the first failed check.
@@ -462,6 +608,7 @@ export async function checkRequestForFunder(
     funderPub: bsv.PublicKey,
     chain: FunderChain
 ): Promise<bsv.Transaction> {
+    // 1. Agreement with the funder's own offer.
     if (offer.funderPubKey !== funderPub.toString())
         throw new TopUpRefusal(
             'the offer is not for the key of this funder config'
@@ -487,8 +634,9 @@ export async function checkRequestForFunder(
         throw new TopUpRefusal('the request transaction does not parse')
     }
     const amount = BigInt(offer.amount)
+    const ownScript = funderScript(offer.funderPubKey)
 
-    // (a) The machine prevout, from the transaction, not from the claims.
+    // 2. Input 0 is a K17 machine of the offer's instance.
     if (request.machineInputIndex !== 0 || tx.inputs.length < 2)
         throw new TopUpRefusal(
             'the machine must be input 0 of a transaction with a funder input'
@@ -503,40 +651,24 @@ export async function checkRequestForFunder(
         machinePrevout,
         'machine prevout'
     )
-    const machine = decodeMachine(machineOutput.script.toHex()).machine
-    if (!machine)
+    const machine = decodeInstance(machineOutput.script.toHex())
+    if (!machine.machine || !machine.instance)
         throw new TopUpRefusal(
             `input 0 spends ${machinePrevout}, which is not a K17 machine`
         )
-    if (machine.instanceId.toLowerCase() !== offer.instanceId)
+    if (machine.machine.instanceId.toLowerCase() !== offer.instanceId)
         throw new TopUpRefusal(
-            `input 0 spends machine ${machine.instanceId}, not the offer's machine ${offer.instanceId}`
-        )
-    if ((await chain.spentBy(parseOutpoint(machinePrevout))) !== undefined)
-        throw new TopUpRefusal(
-            `the machine prevout ${machinePrevout} is not the current tip (it is spent); ask for a new request`
+            `input 0 spends machine ${machine.machine.instanceId}, not the offer's machine ${offer.instanceId}`
         )
 
-    // (b) The topUp argument and the coin value.
-    const args = decodeUnlocking(tx.inputs[0].script.chunks)
-    if (!args)
+    // 3. The lineage: the tip of the machine the funder named.
+    const tip = await followToTip(offer.machine, chain)
+    if (tip !== machinePrevout)
         throw new TopUpRefusal(
-            'the machine input unlocking script does not decode'
+            `input 0 spends ${machinePrevout}, but the unspent tip of the machine named in the offer (${offer.machine}) is ${tip}`
         )
-    if (args.topUp !== amount)
-        throw new TopUpRefusal(
-            `the machine input tops up ${args.topUp} sats, not the offer amount ${amount}`
-        )
-    const coinOutput = await chainOutput(chain.source, offer.coin, 'coin')
-    if (BigInt(coinOutput.satoshis) !== amount)
-        throw new TopUpRefusal(
-            `the coin holds ${coinOutput.satoshis} sats, not the amount ${amount}; refusing (the rest would go to change)`
-        )
-    if (coinOutput.script.toHex() !== funderScript(offer.funderPubKey))
-        throw new TopUpRefusal("the coin is not on this funder's P2PKH script")
 
-    // (d) The coin is an input exactly once, at the stated index, unsigned,
-    // and nothing else spends it.
+    // 4. The coin is an input exactly once, at the stated index, unsigned.
     const uses = inputsSpending(tx, offer.coin)
     if (uses.length === 0)
         throw new TopUpRefusal('the coin is not an input of the request')
@@ -548,11 +680,75 @@ export async function checkRequestForFunder(
         )
     if (tx.inputs[uses[0]].script.toBuffer().length !== 0)
         throw new TopUpRefusal('the funder input already has a script')
+
+    // 5. Every other input: no second coin of this funder, P2PKH only.
+    for (let i = 1; i < tx.inputs.length; i++) {
+        const prevout = await chainOutput(
+            chain.source,
+            prevoutOf(tx.inputs[i]),
+            `prevout of input ${i}`
+        )
+        if (i === request.funderInputIndex) continue
+        if (prevout.script.toHex() === ownScript)
+            throw new TopUpRefusal(
+                `input ${i} spends another coin of this funder's key; refusing (a second signature would move it to the keeper)`
+            )
+        if (!prevout.script.isPublicKeyHashOut())
+            throw new TopUpRefusal(
+                `input ${i} is not a P2PKH coin; refusing an unknown input`
+            )
+    }
+
+    // 6. The form of the machine unlocking script, then its topUp.
+    checkStepUnlocking(tx.inputs[0].script)
+    const args = decodeUnlocking(tx.inputs[0].script.chunks)
+    if (!args)
+        throw new TopUpRefusal(
+            'the machine input unlocking script does not decode'
+        )
+    if (args.topUp !== amount)
+        throw new TopUpRefusal(
+            `the machine input tops up ${args.topUp} sats, not the offer amount ${amount}`
+        )
+
+    // 7. The coin on the chain.
+    const coinOutput = await chainOutput(chain.source, offer.coin, 'coin')
+    if (BigInt(coinOutput.satoshis) !== amount)
+        throw new TopUpRefusal(
+            `the coin holds ${coinOutput.satoshis} sats, not the amount ${amount}; refusing (the rest would go to change)`
+        )
+    if (coinOutput.script.toHex() !== ownScript)
+        throw new TopUpRefusal("the coin is not on this funder's P2PKH script")
     if ((await chain.spentBy(parseOutpoint(offer.coin))) !== undefined)
         throw new TopUpRefusal(`the coin ${offer.coin} is spent already`)
-    // (c) The covenant, through the interpreter on the real prevout.
+
+    // 8. The covenant, through the interpreter on the real prevout.
     verifyInput(tx, 0, machineOutput, 'the machine input')
 
+    // 9. The outcome, by exact replay from the real prevout state.
+    let plan: CyclePlan
+    try {
+        plan = planFromUnlocking(
+            machine.instance as K17Machine,
+            BigInt(machineOutput.satoshis),
+            tx.nLockTime,
+            args
+        )
+    } catch (e) {
+        throw new TopUpRefusal(
+            `the replay of the cycle fails: ${(e as Error).message}`
+        )
+    }
+    const expected = plan.remaining + amount
+    if (
+        plan.halted ||
+        !plan.next ||
+        BigInt(tx.outputs[0].satoshis) !== expected ||
+        tx.outputs[0].script.toHex() !== plan.next.lockingScript.toHex()
+    )
+        throw new TopUpRefusal(
+            `the replay gives output 0 = the next machine with ${expected} sats (remaining ${plan.remaining} + top-up ${amount}), the transaction has ${tx.outputs[0].satoshis}`
+        )
     return tx
 }
 
@@ -605,16 +801,24 @@ export interface CompletedTopUp {
     tx: bsv.Transaction
     /** Value of the new machine output (output 0), sats. */
     machineValue: bigint
+    /**
+     * True when this cycle was on the chain already (it spends the machine
+     * prevout): nothing was sent now, and the top-up is done.
+     */
+    alreadySent?: boolean
 }
 
 /**
- * Finish a request: insert the funder's unlocking script, check every
- * input, check that the machine has not moved, and broadcast.
- * Input: the request, the signature and the chain. Output: the broadcast
- * transaction and the new machine value. Throws OfferExpired when the
- * machine prevout is spent (before or during the broadcast), and a
- * TopUpRefusal when the signature is for another request or input, or an
- * input fails the script interpreter. Nothing is broadcast on a refusal.
+ * Finish a request: insert the funder's unlocking script, check that the
+ * machine has not moved, check every input, and broadcast.
+ * Input: the request, the signature and the chain. Output: the cycle
+ * transaction and the new machine value; `alreadySent` is true when this
+ * same transaction spends the machine prevout already (an earlier run, or
+ * a send that failed after the node took it): nothing is sent then, and
+ * that is success. Throws OfferExpired when another transaction spends the
+ * machine prevout (before or during the broadcast), and a TopUpRefusal when
+ * the signature is for another request or input, or an input fails the
+ * script interpreter. Nothing is broadcast on a refusal.
  */
 export async function completeRequest(
     request: TopUpRequest,
@@ -636,9 +840,14 @@ export async function completeRequest(
             'the request funder input does not spend the offered coin'
         )
     const machinePrevout = parseOutpoint(prevoutOf(tx.inputs[0]))
-    if ((await chain.spentBy(machinePrevout)) !== undefined)
-        throw new OfferExpired()
     funderInput.setScript(bsv.Script.fromHex(signature.unlockingScript))
+    // The txid is final now. A spend of the machine by this same txid means
+    // the cycle is on the chain already (an earlier run, or a send that
+    // reported an error after the node took it): that is success, never
+    // "offer expired", so nobody tops up a second time.
+    const spender = await chain.spentBy(machinePrevout)
+    if (spender === tx.id) return { ...landed(tx), alreadySent: true }
+    if (spender !== undefined) throw new OfferExpired()
     for (let i = 0; i < tx.inputs.length; i++) {
         const prevout = await chainOutput(
             chain.source,
@@ -663,16 +872,28 @@ export async function completeRequest(
     try {
         await chain.send(tx)
     } catch (e) {
-        // A rival cycle can land between the check and the broadcast.
-        let moved = false
+        // The node may have taken the cycle although the send failed, or a
+        // rival cycle may have landed between the check and the send.
+        let after: string | undefined
         try {
-            moved = (await chain.spentBy(machinePrevout)) !== undefined
+            after = await chain.spentBy(machinePrevout)
         } catch {
-            moved = false
+            after = undefined
         }
-        if (moved) throw new OfferExpired()
+        if (after === tx.id) return { ...landed(tx), alreadySent: true }
+        if (after !== undefined) throw new OfferExpired()
         throw e
     }
+    return landed(tx)
+}
+
+/**
+ * The result of a completed top-up.
+ * Input: the cycle transaction. Output: the transaction and the value of
+ * its machine output (output 0).
+ */
+function landed(tx: bsv.Transaction): CompletedTopUp {
+    return { tx, machineValue: BigInt(tx.outputs[0].satoshis) }
     return { tx, machineValue: BigInt(tx.outputs[0].satoshis) }
 }
 

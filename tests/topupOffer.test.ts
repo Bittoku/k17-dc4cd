@@ -6,7 +6,12 @@
  * machine (Keeper.buildTopUpRequest) and on a tree machine through
  * `admit --top-up-offer`; the funder's refusals, each on its own (a tampered
  * topUp argument or amount, a machine prevout that is not the tip, an extra
- * output, the coin missing, at another index or spent, a wrong instance id);
+ * output, the coin missing, at another index, twice, signed or spent, a
+ * wrong instance id, a machine with a copied instance id, a second coin of
+ * the funder key, input 0 not a machine, a coin value that is not the
+ * amount, and a machine unlocking script that is not push-only, has an extra
+ * push or a non-minimal push); `complete` run again or after a send that
+ * failed once the node took the cycle;
  * the planner's refusal of a halting cycle before any request; `complete` on
  * a stale request; and the flag rules (`--top-up` with `--top-up-offer`, the
  * loops). The chain is in memory; no test uses the network.
@@ -18,7 +23,12 @@ import { join } from 'path'
 import { TestWallet, bsv } from 'scrypt-ts'
 import {
     DEAD_MAN_FLOOR,
+    FunderInput,
     K17Machine,
+    NO_SIG,
+    buildFundedCycleTx,
+    planCycle,
+    rosterOf,
     addrOf,
     assemble,
     heartbeatProgram,
@@ -35,6 +45,7 @@ import { Keeper } from '../src/chain/keeper'
 import {
     TopUpOffer,
     TopUpRequest,
+    makeExactCoin,
     readOffer,
     readRequest,
     readSignature,
@@ -73,6 +84,25 @@ const ECON = {
 }
 /** Median time past far ahead of every clock in these tests. */
 const MTP = T0 + 1_000_000
+
+/** A memory chain whose next send takes the transaction and then fails. */
+class AcceptThenFailChain extends MemoryChain {
+    /** When true, the next send stores the transaction and throws. */
+    failAfterNextSend = false
+
+    /**
+     * Store the transaction; throw a timeout after that when asked to.
+     * Input: raw transaction hex. Output: the txid.
+     */
+    async sendRawTransaction(rawTxHex: string): Promise<string> {
+        const txid = await super.sendRawTransaction(rawTxHex)
+        if (this.failAfterNextSend) {
+            this.failAfterNextSend = false
+            throw new Error('timeout after the node took the transaction')
+        }
+        return txid
+    }
+}
 
 /** A memory chain that lists the real unspent P2PKH coins of an address. */
 class ListingChain extends MemoryChain {
@@ -273,8 +303,7 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
      * A plain machine, an offer for it and a request built by the keeper at
      * clock `now`. Output: everything the tests need.
      */
-    async function offered(now = T0 + 100) {
-        const chain = new MemoryChain()
+    async function offered(now = T0 + 100, chain = new MemoryChain()) {
         const cfg = await deployed(chain)
         const { offer, offerPath, funderCfg } = await makeOffer(
             chain,
@@ -463,6 +492,256 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
             return tx.uncheckedSerialize()
         }
 
+        /** A funder input for a coin of the funder key, with a claimed value. */
+        const coinInput = (outpoint: string, sats: bigint): FunderInput => {
+            const { txid, vout } = parseOutpoint(outpoint)
+            return {
+                txId: txid,
+                outputIndex: vout,
+                satoshis: sats,
+                script: funderScript,
+            }
+        }
+
+        /**
+         * A request that a dishonest keeper builds by hand with k17-vm: the
+         * cycle at T0 + 100 from the deployed machine, with `coins` as the
+         * funder inputs and `topUp` on the machine input.
+         */
+        async function craft(
+            f: Awaited<ReturnType<typeof offered>>,
+            coins: FunderInput[],
+            topUp: bigint,
+            coin = f.offer.coin
+        ): Promise<TopUpRequest> {
+            const prevTx = f.chain.txs.get(
+                parseOutpoint(f.cfg.machineOutpoint as string).txid
+            )!
+            const m = K17Machine.fromTx(prevTx, 0) as K17Machine
+            const wallet = new TestWallet(WALLET_KEY, f.chain)
+            const keeperAddress = await wallet.getDefaultAddress()
+            const lock = BigInt(T0 + 100)
+            const plan = planCycle(
+                m,
+                BigInt(FUNDING),
+                lock,
+                keeperAddress,
+                [],
+                NO_SIG,
+                {},
+                undefined,
+                { topUp }
+            )
+            await m.connect(wallet)
+            const built = await buildFundedCycleTx(
+                m,
+                plan,
+                keeperAddress,
+                lock,
+                coins
+            )
+            return { ...f.request, coin, txHex: built.tx.uncheckedSerialize() }
+        }
+
+        /** The request transaction with input 0's unlocking script replaced. */
+        function withUnlocking(
+            txHex: string,
+            change: (script: bsv.Script) => string
+        ): string {
+            const tx = new bsv.Transaction(txHex)
+            tx.inputs[0].setScript(
+                bsv.Script.fromHex(change(tx.inputs[0].script))
+            )
+            return tx.uncheckedSerialize()
+        }
+
+        /** Hex of a script made of some chunks of another script. */
+        const chunksHex = (script: bsv.Script, from: number, to?: number) => {
+            const part = new bsv.Script('')
+            for (const chunk of script.chunks.slice(from, to))
+                if (chunk.buf) part.add(chunk.buf)
+                else part.add(chunk.opcodenum)
+            return part.toHex()
+        }
+
+        it('refuses a machine with a copied instance id (another lineage)', async () => {
+            const f = await offered()
+            // A real K17 machine of the attacker with the same instance id.
+            const clone = newMachine(
+                heartbeatProgram(),
+                ECON,
+                BigInt(T0),
+                rosterOf(),
+                undefined,
+                f.offer.instanceId
+            )
+            await clone.connect(new TestWallet(WALLET_KEY, f.chain))
+            const cloneTx = await clone.deploy(FUNDING)
+            const cloneCfg = { ...f.cfg, machineOutpoint: `${cloneTx.id}:0` }
+            const built = await keeperOn(cloneCfg, f.chain).buildTopUpRequest(
+                T0 + 100,
+                { ...f.offer, machine: cloneCfg.machineOutpoint }
+            )
+            expect(built.error).to.equal(undefined)
+            await refused(
+                f,
+                built.request as TopUpRequest,
+                `but the unspent tip of the machine named in the offer (${f.offer.machine}) is ${f.offer.machine}`
+            )
+        })
+
+        it('refuses a request with a second coin of the funder key (two offers in one transaction)', async () => {
+            const f = await offered()
+            const second = await makeExactCoin(
+                new TestWallet(FUNDER_KEY, f.chain),
+                AMOUNT,
+                new Set([f.offer.coin])
+            )
+            expect(second.outpoint).to.not.equal(f.offer.coin)
+            const request = await craft(
+                f,
+                [
+                    coinInput(f.offer.coin, AMOUNT),
+                    coinInput(second.outpoint, AMOUNT),
+                ],
+                2n * AMOUNT
+            )
+            await refused(
+                f,
+                request,
+                "input 2 spends another coin of this funder's key"
+            )
+        })
+
+        it('refuses a request whose input 0 is not a K17 machine', async () => {
+            const f = await offered()
+            const tx = new bsv.Transaction(f.request.txHex)
+            const { txid, vout } = parseOutpoint(f.offer.coin)
+            tx.inputs[0] = new bsv.Transaction.Input({
+                prevTxId: Buffer.from(txid, 'hex'),
+                outputIndex: vout,
+                script: tx.inputs[0].script,
+                sequenceNumber: tx.inputs[0].sequenceNumber,
+            })
+            await refused(
+                f,
+                {
+                    ...f.request,
+                    machinePrevout: f.offer.coin,
+                    txHex: tx.uncheckedSerialize(),
+                },
+                'which is not a K17 machine'
+            )
+        })
+
+        it('refuses a coin whose value on the chain is not the amount', async () => {
+            const f = await offered()
+            const bigger = await makeExactCoin(
+                new TestWallet(FUNDER_KEY, f.chain),
+                AMOUNT + 1n
+            )
+            // The funder's own offer names this coin with the amount
+            // (a wrong offer file); the keeper claims the amount as its value.
+            const offerPath = path('offer-bigger.json')
+            writeFileSync(
+                offerPath,
+                JSON.stringify({ ...f.offer, coin: bigger.outpoint })
+            )
+            const request = await craft(
+                f,
+                [coinInput(bigger.outpoint, AMOUNT)],
+                AMOUNT,
+                bigger.outpoint
+            )
+            const signed = await sign(
+                f.chain,
+                f.funderCfg,
+                requestFile(request),
+                offerPath
+            )
+            expect(signed.code, signed.text).to.equal(1)
+            expect(signed.text).to.contain(
+                `the coin holds ${AMOUNT + 1n} sats, not the amount ${AMOUNT}`
+            )
+        })
+
+        it('refuses a request that uses the coin twice', async () => {
+            const f = await offered()
+            const tx = new bsv.Transaction(f.request.txHex)
+            tx.inputs.push(
+                new bsv.Transaction.Input({
+                    prevTxId: tx.inputs[1].prevTxId,
+                    outputIndex: tx.inputs[1].outputIndex,
+                    script: new bsv.Script(''),
+                })
+            )
+            await refused(
+                f,
+                { ...f.request, txHex: tx.uncheckedSerialize() },
+                'the coin is an input more than once'
+            )
+        })
+
+        it('refuses a request whose funder input has a script already', async () => {
+            const f = await offered()
+            const tx = new bsv.Transaction(f.request.txHex)
+            tx.inputs[1].setScript(
+                new bsv.Script('').add(Buffer.from('01', 'hex'))
+            )
+            await refused(
+                f,
+                { ...f.request, txHex: tx.uncheckedSerialize() },
+                'the funder input already has a script'
+            )
+        })
+
+        it('refuses a machine unlocking script that is not push-only (a decoder sees other arguments than the interpreter)', async () => {
+            const f = await offered()
+            // "<5000> OP_DROP" in front: a naive decoder reads chunk 10 one
+            // place further on, the interpreter drops the extra push.
+            const txHex = withUnlocking(f.request.txHex, (script) => {
+                const front = new bsv.Script('')
+                    .add(Buffer.from('8813', 'hex'))
+                    .add(bsv.Opcode.OP_DROP)
+                return front.toHex() + script.toHex()
+            })
+            await refused(
+                f,
+                { ...f.request, txHex },
+                'the machine input unlocking script is not push-only'
+            )
+        })
+
+        it('refuses a machine unlocking script with an extra push', async () => {
+            const f = await offered()
+            const txHex = withUnlocking(
+                f.request.txHex,
+                (script) =>
+                    script.toHex() +
+                    new bsv.Script('').add(Buffer.from('01', 'hex')).toHex()
+            )
+            await refused(
+                f,
+                { ...f.request, txHex },
+                /unlocking script has 16 pushes, the step ABI has 15/
+            )
+        })
+
+        it('refuses a machine unlocking script with a push that is not minimal', async () => {
+            const f = await offered()
+            const txHex = withUnlocking(f.request.txHex, (script) => {
+                const buf = script.chunks[10].buf as Buffer
+                const pushdata1 =
+                    '4c' +
+                    buf.length.toString(16).padStart(2, '0') +
+                    buf.toString('hex')
+                return (
+                    chunksHex(script, 0, 10) + pushdata1 + chunksHex(script, 11)
+                )
+            })
+            await refused(f, { ...f.request, txHex }, 'push 10 is not minimal')
+        })
+
         it('refuses a request whose machine input tops up another amount', async () => {
             const f = await offered()
             await refused(
@@ -489,7 +768,11 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
             // Another cycle lands first.
             const rival = await keeperOn(f.cfg, f.chain).tick(T0 + 200)
             expect(rival.txid).to.be.a('string')
-            await refused(f, f.request, 'is not the current tip')
+            await refused(
+                f,
+                f.request,
+                'but the unspent tip of the machine named in the offer'
+            )
         })
 
         it('refuses a request with an extra output that takes value (the interpreter fails)', async () => {
@@ -647,6 +930,43 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
                 'offer expired: the machine moved; build a new request'
             )
             expect(f.chain.txs.size).to.equal(before)
+        })
+
+        it('complete run again after a success reports the cycle as sent, not expired', async () => {
+            const f = await offered()
+            const signed = await sign(
+                f.chain,
+                f.funderCfg,
+                f.requestPath,
+                f.offerPath
+            )
+            expect(signed.code, signed.text).to.equal(0)
+            const first = await complete(f.chain, f.requestPath, signed.sigPath)
+            expect(first.code, first.text).to.equal(0)
+            const sends = f.chain.cycleBroadcasts
+            const again = await complete(f.chain, f.requestPath, signed.sigPath)
+            expect(again.code, again.text).to.equal(0)
+            expect(again.text).to.contain('is on the chain already')
+            expect(again.text).to.not.contain('expired')
+            expect(f.chain.cycleBroadcasts).to.equal(sends)
+        })
+
+        it('complete reports success when the send fails after the node took the cycle', async () => {
+            const chain = new AcceptThenFailChain()
+            const f = await offered(T0 + 100, chain)
+            const signed = await sign(
+                f.chain,
+                f.funderCfg,
+                f.requestPath,
+                f.offerPath
+            )
+            expect(signed.code, signed.text).to.equal(0)
+            chain.failAfterNextSend = true
+            const done = await complete(f.chain, f.requestPath, signed.sigPath)
+            expect(done.code, done.text).to.equal(0)
+            expect(done.text).to.contain('is on the chain already')
+            expect(done.text).to.not.contain('expired')
+            expect(chain.cycleBroadcasts).to.equal(1)
         })
 
         it('complete refuses a signature of another request', async () => {

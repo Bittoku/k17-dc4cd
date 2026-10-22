@@ -13,6 +13,7 @@
 import { bsv } from 'scrypt-ts'
 import { RabinSig } from 'scrypt-ts-lib'
 import {
+    CyclePlan,
     CycleTree,
     K17Machine,
     SparseMerkleTree,
@@ -253,6 +254,43 @@ function leafGivesRoot(
 }
 
 /**
+ * Plan a cycle again from its decoded unlocking arguments (the exact
+ * replay that the history walk and the top-up funder use).
+ * Input: the machine the cycle spent, the value of that machine output,
+ * the cycle's nLockTime and the decoded unlocking arguments.
+ * Output: the CyclePlan that planCycle gives for these arguments, with
+ * `topUp` from chunk 10. Throws what planCycle throws (for example a
+ * rejected witness, or a top-up on a halting cycle).
+ */
+export function planFromUnlocking(
+    machine: K17Machine,
+    value: bigint,
+    lockTime: number,
+    args: UnlockingArguments
+): CyclePlan {
+    const keeperAddress = bsv.Address.fromPublicKeyHash(
+        Buffer.from(args.keeperHex, 'hex')
+    )
+    return planCycle(
+        machine,
+        value,
+        BigInt(lockTime),
+        keeperAddress,
+        decodeCells(args.witnessHex),
+        args.sig,
+        {
+            attestKey: args.keyAHex ? pubKeyFromBytes(args.keyAHex) : undefined,
+            endorseKey: args.keyBHex
+                ? pubKeyFromBytes(args.keyBHex)
+                : undefined,
+            payoutHex: args.payoutHex || undefined,
+        },
+        args.tree,
+        { topUp: args.topUp }
+    )
+}
+
+/**
  * Replay a cycle with the reference code to find the keeper reward and the
  * payout, then check them against the real outputs.
  * The unlocking script of input 0 is read by `decodeUnlocking`. Output 0
@@ -273,31 +311,11 @@ function replayCycle(
 ): Replay | null {
     try {
         if (!args || !previous.instance) return null
-        const machine = previous.instance as K17Machine
-        const keeperAddress = bsv.Address.fromPublicKeyHash(
-            Buffer.from(args.keeperHex, 'hex')
-        )
-        const witness = decodeCells(args.witnessHex)
-        const attestKey = args.keyAHex
-            ? pubKeyFromBytes(args.keyAHex)
-            : undefined
-        const endorseKey = args.keyBHex
-            ? pubKeyFromBytes(args.keyBHex)
-            : undefined
-        const plan = planCycle(
-            machine,
+        const plan = planFromUnlocking(
+            previous.instance as K17Machine,
             BigInt(previousValue),
-            BigInt(tx.nLockTime),
-            keeperAddress,
-            witness,
-            args.sig,
-            {
-                attestKey,
-                endorseKey,
-                payoutHex: args.payoutHex || undefined,
-            },
-            args.tree,
-            { topUp: args.topUp }
+            tx.nLockTime,
+            args
         )
         const expected: number[] = []
         if (plan.reward > 0n) expected.push(Number(plan.reward))

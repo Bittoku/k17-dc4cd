@@ -969,6 +969,34 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
             expect(chain.cycleBroadcasts).to.equal(1)
         })
 
+        it('complete reports a malleated variant of the cycle as sent, not expired', async () => {
+            const f = await offered()
+            const signed = await sign(
+                f.chain,
+                f.funderCfg,
+                f.requestPath,
+                f.offerPath
+            )
+            expect(signed.code, signed.text).to.equal(0)
+            const sig = JSON.parse(readFileSync(signed.sigPath, 'utf8'))
+            // The same cycle with a changed funder scriptSig (OP_0 OP_DROP
+            // appended): another txid, the same machine and coin spends.
+            const variant = new bsv.Transaction(f.request.txHex)
+            variant.inputs[f.request.funderInputIndex].setScript(
+                bsv.Script.fromHex(sig.unlockingScript + '0075')
+            )
+            expect(variant.id).to.not.equal(
+                new bsv.Transaction(f.request.txHex).id
+            )
+            f.chain.add(variant)
+            const sends = f.chain.cycleBroadcasts
+            const done = await complete(f.chain, f.requestPath, signed.sigPath)
+            expect(done.code, done.text).to.equal(0)
+            expect(done.text).to.contain('is on the chain already')
+            expect(done.text).to.not.contain('expired')
+            expect(f.chain.cycleBroadcasts).to.equal(sends)
+        })
+
         it('complete refuses a signature of another request', async () => {
             const f = await offered()
             const signed = await sign(

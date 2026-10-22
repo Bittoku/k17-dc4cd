@@ -443,6 +443,48 @@ The output lists:
 
 The machine folds each value that OUTH logs into its log hash: `logHash := sha256(logHash || cell(value))`, from 32 zero bytes. `inspect` replays every cycle, takes the cells that OUTH folded and repeats the fold. This is exact for any program, not only the generated one. When the result differs from the machine, it prints `logHash: mismatch` and exits with code 1. It prints `logHash: not checked` only when a cycle could not be replayed. `inspect` also exits with an error when the history does not rebuild the roster root and seq of the machine. If you give both `--genesis` and `--config`, the `--genesis` inscription is used; the config supplies the network unless you pass `--network`.
 
+## Top up a running machine
+
+A machine can get more escrow while it runs. Anyone can add it. A top-up does not change `lastTime`, so it does not move the dead-man timer. A top-up on a cycle that halts the machine is refused. The architecture document explains the rules (section 5, "Topping up a machine").
+
+### Path 1: the keeper pays
+
+Add `--top-up <sats>` to a command that sends a cycle. The wallet of that command pays. The top-up applies once, on the first cycle that goes out.
+
+```bash
+k17forth keeper --config sponsor.toml --interval 60 --top-up 50000
+```
+
+### Path 2: a funder pays
+
+The funder and the keeper work in turns. The funder takes the machine outpoint from the deploy output or from the config of the sponsor, never from the keeper.
+
+1. The funder makes an offer:
+
+```bash
+k17forth topup offer funder.toml --machine <machine outpoint> --amount 50000 --out offer.json
+```
+
+2. The funder gives `offer.json` to the sponsor. The sponsor puts the offer on a cycle. This example admits a member. `remove` and `endorse` take `--top-up-offer` in the same way.
+
+```bash
+k17forth admit sponsor.toml --member-key land4.pub --payout <payout address> --top-up-offer offer.json
+```
+
+3. The funder checks the request and signs it:
+
+```bash
+k17forth topup sign funder.toml topup-request.json --offer offer.json --out sig.json
+```
+
+4. The sponsor sends the cycle:
+
+```bash
+k17forth topup complete topup-request.json sig.json
+```
+
+Then run `k17forth inspect <tip outpoint> --history --config sponsor.toml`. The history line of the cycle shows `top-up <sats>`.
+
 ## Before you go to mainnet
 
 On mainnet, each command needs the switch `--i-know-this-spends-real-money`.

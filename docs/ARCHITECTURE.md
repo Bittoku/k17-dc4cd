@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains four things. First, how `k17-dc4cd` is built. Second, how you write and run your own machine with it. Third, how gateways join and leave a machine. Fourth, what the chain gives a DC4CD-style sensor network that a plain radio network does not give.
+This document explains five things. First, how `k17-dc4cd` is built. Second, how you write and run your own machine with it. Third, how gateways join and leave a machine. Fourth, how anyone can add escrow to a running machine. Fifth, what the chain gives a DC4CD-style sensor network that a plain radio network does not give.
 
 The text describes the code at the commit that added this file. Every claim about the contract comes from `../k17-vm` (public: https://github.com/Bittoku/k17-vm). This repository is public at https://github.com/Bittoku/k17-dc4cd.
 
@@ -286,7 +286,82 @@ sequenceDiagram
 
 The `remove` command reloads the roster. It signs `REMOVE` over the key hash and the payout of the member and relays the cycle. If another cycle lands first, it reloads once and signs again. After the removal, the old proof of the member no longer matches the root. The contract rejects any cycle that uses it. A well-behaved gateway also notices, because it reloads the roster before every relay. It refuses a reading when its key is not in the roster.
 
-## 5. Writing customized acceptance and removal flows (sponsor side)
+## 5. Topping up a machine
+
+A machine can get more escrow after deployment. The rules of the contract are in the k17-vm architecture document, section 5: https://github.com/Bittoku/k17-vm/blob/main/docs/ARCHITECTURE.md#5-topping-up-the-escrow. This section shows how the `k17forth` tools use them.
+
+Rules that hold on both paths:
+
+- Anyone can top up. The contract does not check who supplies the satoshis. A group of people can fund one machine.
+- A top-up never changes `lastTime`. It has no effect on the reward auction and no effect on the dead-man timer.
+- A top-up on a cycle that halts the machine is refused. The contract never refunds it.
+- A blocked machine still halts at `lastTime + deadMan`. The refund goes to the beneficiary, and it includes the earlier top-ups.
+
+### Self-funded top-up
+
+Use `--top-up <sats>` on `keeper`, `gateway run`, `admit`, `remove` or `endorse`. The wallet of the command pays the sats.
+
+- In the loops (`keeper`, `gateway run`) the top-up applies once. It rides on the first cycle that goes out. Later cycles add nothing.
+- A cycle that halts the machine takes no top-up. The command prints why and drops the top-up. It does not hold the top-up for a later cycle.
+- A send can report an error although the network took the cycle. The keeper then follows the machine forward and matches its own cycle by keeper address, top-up and lock time. When it finds the cycle, it counts the top-up as done. It never adds the top-up a second time.
+- `admit`, `remove` and `endorse` also carry the top-up on the first cycle that goes out.
+
+### Top-up by a third party (offer flow)
+
+A funder who is not the keeper can pay. The funder keeps its own key. The keeper builds the transaction. The funder signs one input. No file of the flow holds a private key.
+
+The steps are: offer, request, sign, complete.
+
+```mermaid
+sequenceDiagram
+    participant F as Funder
+    participant K as Keeper or sponsor
+    participant C as Chain
+    F->>C: topup offer: read the machine, find or make a coin of exactly the amount
+    F->>K: offer.json (any channel)
+    K->>C: admit, remove or endorse with --top-up-offer: sync to the tip
+    K->>K: plan the cycle, build the transaction, sign the keeper inputs
+    K->>F: topup-request.json
+    F->>C: topup sign: read the lineage, every prevout and the coin
+    F->>F: interpreter run and exact replay of the cycle
+    F->>K: sig.json (the funder unlocking script)
+    K->>C: topup complete: check every input, then broadcast
+    C-->>K: cycle on the chain, machine value is remaining plus amount
+```
+
+1. The funder runs `topup offer <funder.toml> --machine <outpoint> --amount <sats>`. The command writes `offer.json`. It holds the machine outpoint, the coin, the amount, the funder public key, the instance id and the network.
+2. The keeper runs `admit`, `remove` or `endorse` with `--top-up-offer offer.json`. The command writes `topup-request.json` and sends nothing. For `endorse`, a cycle before the endorsement goes out as usual, and the offer goes on the endorsement cycle. `keeper` and `gateway run` refuse `--top-up-offer` with exit code 2, because an offer needs one cycle that waits for the funder.
+3. The funder runs `topup sign <funder.toml> topup-request.json --offer offer.json`. The command writes `sig.json`.
+4. The keeper runs `topup complete topup-request.json sig.json`. The command puts the signature into the transaction, checks every input with the script interpreter and broadcasts.
+
+What `sign` checks. The funder trusts nothing in the request. It reads the chain itself:
+
+- **Machine lineage.** `sign` follows the spends forward from the `--machine` outpoint in the offer to the unspent tip. Input 0 of the request must spend that tip. An equal instance id is not enough, because anyone can deploy a machine with a copied instance id.
+- **One funder input.** The offered coin is an input exactly once, at the stated index, with an empty unlocking script. No other input locks to the funder P2PKH script. Every input other than the machine input is P2PKH.
+- **Push-only unlocking script.** The unlocking script of the machine input must be push-only, with minimal pushes and exactly the pushes of `step`. Its `topUp` argument must equal the amount.
+- **Interpreter run.** The machine input must pass the script interpreter, with the flags SIGPUSHONLY, CLEANSTACK and FORKID.
+- **Exact replay.** `sign` replays the cycle with `planCycle` from the arguments it decoded, the real prevout and the lock time of the transaction. The plan must be live. Output 0 must hold exactly `remaining + amount` and must carry exactly the next machine script.
+
+Last, `sign` signs its input with `SIGHASH_ALL | FORKID`. The signature covers all outputs. Nobody can move the coin of the funder to another output after that.
+
+Trust note. The funder must take the `--machine` outpoint from the deploy output or from the config of the sponsor. The funder must never take it from the keeper. A copy of the machine looks the same at offer time. The lineage check starts from this outpoint, so it is the root of trust. Use a recent outpoint. The walk makes about two provider calls for each cycle since that outpoint, and it stops after 10 000 cycles.
+
+`complete` handles a late or repeated run. When another transaction spent the machine prevout, `complete` stops with `offer expired: the machine moved; build a new request`. When the spender is this cycle, `complete` reports success and sends nothing. The spender counts as this cycle when its txid is the same, or when it also spends the offered coin. The second case covers a variant of the transaction with a changed keeper signature.
+
+### Crowd-funding
+
+Several funders can top up the same machine. Each funder makes its own offer. The keeper puts one offer on each cycle. The machine moves after each cycle, so each funder needs a new request for the new tip. Funders can use the same `--machine` outpoint, because the lineage check follows the spends forward.
+
+### Limits
+
+- A top-up has no dead-man effect. Money alone does not keep a machine alive.
+- A blocked machine refunds to the beneficiary at `lastTime + deadMan`. The refund includes the top-ups.
+- The tools do not reserve coins between `request` and `complete`. If the keeper wallet or the funder spends a coin in that time, `complete` fails with a conflict error. Build a new request.
+- The coins of the funder must be P2PKH. The keeper inputs must be P2PKH too.
+- The funder reads the chain through its provider. A provider that lies can make the funder sign a transaction that never confirms. It cannot move the funds.
+- Machines deployed before the top-up change cannot take a top-up.
+
+## 6. Writing customized acceptance and removal flows (sponsor side)
 
 The contract does not decide who can join. It checks one thing: the sponsor key signed the admission. Everything else about acceptance and removal is your policy. The policy has an off-chain part and an on-chain part.
 
@@ -325,7 +400,7 @@ You write these rules in the program. The contract enforces them for every party
 
 ### Deposit and number of rounds
 
-A consortium machine runs many rounds on one deposit. When the balance cannot pay a `payleaf` bounty with 1 sat left over, that cycle halts the machine. The reading in that cycle is not paid and is not logged. The machine then refunds the remaining balance to the beneficiary. The tree program has no floor check, so an unaffordable `payleaf` is a fault and the halt follows by itself. The current contract cannot take more escrow after deployment. Its next output must carry exactly the old value minus the reward and the payout, and the contract checks this by hash. Size the deposit for the planned rounds. To get a longer life, redeploy. To carry the members over, copy the current roster (`inspect --history --json`, `tree.members`) into a new `members.json`. Set each `lastRound` to 0, then run `deploy --tree` with it. Each gateway must then point its config at the new machine. For the reasons, and for a possible future change, see the section "Topping up the escrow" in the k17-vm architecture document: https://github.com/Bittoku/k17-vm/blob/main/docs/ARCHITECTURE.md#5-topping-up-the-escrow.
+A consortium machine runs many rounds on one deposit. When the balance cannot pay a `payleaf` bounty with 1 sat left over, that cycle halts the machine. The reading in that cycle is not paid and is not logged. The machine then refunds the remaining balance to the beneficiary. The tree program has no floor check, so an unaffordable `payleaf` is a fault and the halt follows by itself. Anyone can add escrow later (see section 5), so the deposit is not a hard limit. Size the deposit for the planned rounds. To get a longer life, top up the machine (section 5). A machine deployed before the top-up change cannot take a top-up. Redeploy it: to carry the members over, copy the current roster (`inspect --history --json`, `tree.members`) into a new `members.json`, set each `lastRound` to 0, then run `deploy --tree` with it. Each gateway must then point its config at the new machine.
 
 ### Limits you should know
 
@@ -334,7 +409,7 @@ A consortium machine runs many rounds on one deposit. When the balance cannot pa
 - **Keeper command.** `k17forth keeper` does not relay tree cycles. Gateways and the sponsor tools do.
 - **One stuck cycle stops the tree tools.** `RosterMirror.apply` throws on a cycle that it cannot replay (status `ambiguous`). Then `loadRoster`, `admit`, `remove` and the tree gateway fail. The funds stay safe. A keeper still halts the machine at its end, and the dead-man interval refunds the beneficiary. Neither needs the roster.
 
-## 6. What settling DC4CD on a blockchain gains: security
+## 7. What settling DC4CD on a blockchain gains: security
 
 ### The problem on a plain network
 
@@ -417,7 +492,7 @@ The gateway signs, not the mote. The line `R <reading>` on the serial link has n
 - **Latency.** A hop is a block, not a millisecond. A round closes when the median time past passes its end. This is not a real-time sensor network.
 - **No code-carrying `tell:` between machines.** DC4CD nodes send each other Forth source. On the chain, a program is fixed at deployment. No machine sends code to another machine. Two machines that message each other in one transaction are a parked design. Interpreter size blocks it (`docs/inter-machine-tell.md`).
 
-## 7. Where to go next
+## 8. Where to go next
 
 - `docs/tutorial-dc4cd-gateway.md`: a sponsor and three landowners on testnet, then the tree-mode flow, with real output.
 - `README.md`: the command table and the operational rules.

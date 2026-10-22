@@ -846,8 +846,11 @@ export async function completeRequest(
     // reported an error after the node took it): that is success, never
     // "offer expired", so nobody tops up a second time.
     const spender = await chain.spentBy(machinePrevout)
-    if (spender === tx.id) return { ...landed(tx), alreadySent: true }
-    if (spender !== undefined) throw new OfferExpired()
+    if (spender !== undefined) {
+        const ours = await ourCycle(chain, spender, tx, request.coin)
+        if (ours) return { ...ours, alreadySent: true }
+        throw new OfferExpired()
+    }
     for (let i = 0; i < tx.inputs.length; i++) {
         const prevout = await chainOutput(
             chain.source,
@@ -880,8 +883,11 @@ export async function completeRequest(
         } catch {
             after = undefined
         }
-        if (after === tx.id) return { ...landed(tx), alreadySent: true }
-        if (after !== undefined) throw new OfferExpired()
+        if (after !== undefined) {
+            const ours = await ourCycle(chain, after, tx, request.coin)
+            if (ours) return { ...ours, alreadySent: true }
+            throw new OfferExpired()
+        }
         throw e
     }
     return landed(tx)
@@ -894,7 +900,37 @@ export async function completeRequest(
  */
 function landed(tx: bsv.Transaction): CompletedTopUp {
     return { tx, machineValue: BigInt(tx.outputs[0].satoshis) }
-    return { tx, machineValue: BigInt(tx.outputs[0].satoshis) }
+}
+
+/**
+ * Decide whether the transaction that spent the machine prevout is our
+ * cycle. It is when its txid equals ours, or when it also spends the
+ * offered funder coin (a malleated variant of our cycle: only our cycle
+ * can spend that coin together with the machine).
+ * Input: the chain, the spender txid, our transaction and the offered
+ * coin (`txid:vout`). Output: the landed result for the spender, or
+ * undefined when the spender is a different cycle or cannot be read.
+ */
+async function ourCycle(
+    chain: CompleteChain,
+    spender: string,
+    ours: bsv.Transaction,
+    coin: string
+): Promise<CompletedTopUp | undefined> {
+    if (spender === ours.id) return landed(ours)
+    let other: bsv.Transaction
+    try {
+        other = await chainTx(
+            chain.source,
+            spender,
+            'the spender of the machine'
+        )
+    } catch {
+        return undefined
+    }
+    return other.inputs.some((input) => prevoutOf(input) === coin)
+        ? landed(other)
+        : undefined
 }
 
 /** Result of `makeExactCoin`. */

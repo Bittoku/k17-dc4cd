@@ -34,12 +34,16 @@
  *   with exactly the step ABI pushes, runs the script interpreter on the
  *   machine input against the real prevout, and replays the cycle with
  *   planCycle to check output 0 exactly.
- * - `complete` treats a machine prevout that this same transaction spends
- *   as success (already sent), never as an expired offer.
+ * - `complete` treats a spend of the machine prevout by this cycle (the
+ *   same txid, or the same transaction apart from the unlocking scripts)
+ *   as success (already sent). A spend by another cycle that also spends
+ *   the offered coin is a refusal: the top-up landed, this request's cycle
+ *   did not. A spender that cannot be read is a refusal that names it.
+ *   Only another cycle without the coin gives an expired offer.
  *
  * Exports: the file types and their readers (`readOffer`, `readRequest`,
  * `readSignature`), `offerCoin`, `requestIdOf`, `buildFundedCycle`,
- * `checkRequestForFunder`, `signFunderInput`, `completeRequest`,
+ * `checkRequestForFunder`, `signFunderInput`, `completeRequest`, `sameCycle`,
  * `makeExactCoin`, and the error classes `TopUpRefusal` and
  * `OfferExpired`.
  */
@@ -813,12 +817,15 @@ export interface CompletedTopUp {
  * machine has not moved, check every input, and broadcast.
  * Input: the request, the signature and the chain. Output: the cycle
  * transaction and the new machine value; `alreadySent` is true when this
- * same transaction spends the machine prevout already (an earlier run, or
- * a send that failed after the node took it): nothing is sent then, and
- * that is success. Throws OfferExpired when another transaction spends the
- * machine prevout (before or during the broadcast), and a TopUpRefusal when
- * the signature is for another request or input, or an input fails the
- * script interpreter. Nothing is broadcast on a refusal.
+ * cycle spends the machine prevout already (the same txid, or the same
+ * transaction apart from the unlocking scripts; an earlier run, or a send
+ * that failed after the node took it): nothing is sent then, and that is
+ * success. Throws OfferExpired when another cycle that does not spend the
+ * offered coin spends the machine prevout (before or during the
+ * broadcast). Throws a TopUpRefusal when another cycle spent the offered
+ * coin (the top-up landed, this cycle did not), when the spender cannot be
+ * read, when the signature is for another request or input, or when an
+ * input fails the script interpreter. Nothing is broadcast on a refusal.
  */
 export async function completeRequest(
     request: TopUpRequest,
@@ -848,8 +855,7 @@ export async function completeRequest(
     const spender = await chain.spentBy(machinePrevout)
     if (spender !== undefined) {
         const ours = await ourCycle(chain, spender, tx, request.coin)
-        if (ours) return { ...ours, alreadySent: true }
-        throw new OfferExpired()
+        return { ...ours, alreadySent: true }
     }
     for (let i = 0; i < tx.inputs.length; i++) {
         const prevout = await chainOutput(
@@ -885,8 +891,7 @@ export async function completeRequest(
         }
         if (after !== undefined) {
             const ours = await ourCycle(chain, after, tx, request.coin)
-            if (ours) return { ...ours, alreadySent: true }
-            throw new OfferExpired()
+            return { ...ours, alreadySent: true }
         }
         throw e
     }
@@ -903,20 +908,44 @@ function landed(tx: bsv.Transaction): CompletedTopUp {
 }
 
 /**
- * Decide whether the transaction that spent the machine prevout is our
- * cycle. It is when its txid equals ours, or when it also spends the
- * offered funder coin (a malleated variant of our cycle: only our cycle
- * can spend that coin together with the machine).
- * Input: the chain, the spender txid, our transaction and the offered
- * coin (`txid:vout`). Output: the landed result for the spender, or
- * undefined when the spender is a different cycle or cannot be read.
+ * Tell if two transactions are the same cycle apart from their unlocking
+ * scripts (a malleated variant: another txid, the same transaction).
+ * Input: the two transactions. Output: true when their serializations are
+ * equal after every input script is emptied. The serialization covers the
+ * version, every prevout and sequence in order, every output script and
+ * value, and nLockTime.
+ */
+export function sameCycle(a: bsv.Transaction, b: bsv.Transaction): boolean {
+    const bare = (t: bsv.Transaction): string => {
+        const copy = new bsv.Transaction(t.uncheckedSerialize())
+        for (const input of copy.inputs) input.setScript(new bsv.Script(''))
+        return copy.uncheckedSerialize()
+    }
+    return bare(a) === bare(b)
+}
+
+/**
+ * Decide what the spend of the machine prevout means for this request.
+ * Input: the chain, the spender txid, our transaction (with the funder
+ * script in it) and the offered coin (`txid:vout`).
+ * Output: the landed result when the spender is our cycle: the same txid,
+ * or the same transaction apart from the unlocking scripts (`sameCycle`).
+ * Throws:
+ * - a TopUpRefusal when the spender also spends the offered coin but is
+ *   another cycle (for example a second request built from the same
+ *   offer): the top-up landed, but this request's cycle did not go out;
+ * - a TopUpRefusal that names the spender when it cannot be read, because
+ *   it can be our own cycle (a malleated variant) and a new offer would
+ *   then top up twice;
+ * - OfferExpired when the spender is another cycle that does not spend
+ *   the offered coin.
  */
 async function ourCycle(
     chain: CompleteChain,
     spender: string,
     ours: bsv.Transaction,
     coin: string
-): Promise<CompletedTopUp | undefined> {
+): Promise<CompletedTopUp> {
     if (spender === ours.id) return landed(ours)
     let other: bsv.Transaction
     try {
@@ -926,11 +955,16 @@ async function ourCycle(
             'the spender of the machine'
         )
     } catch {
-        return undefined
+        throw new TopUpRefusal(
+            `the machine was spent by ${spender}, but that transaction cannot be read; it can be this cycle. Look at ${spender} and check it before you build a new request`
+        )
     }
-    return other.inputs.some((input) => prevoutOf(input) === coin)
-        ? landed(other)
-        : undefined
+    if (sameCycle(other, ours)) return landed(other)
+    if (other.inputs.some((input) => prevoutOf(input) === coin))
+        throw new TopUpRefusal(
+            `the offered coin went into another cycle ${spender}; the top-up landed, but this request's cycle did not go out. Do not make a new offer for this top-up.`
+        )
+    throw new OfferExpired()
 }
 
 /** Result of `makeExactCoin`. */

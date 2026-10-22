@@ -979,15 +979,36 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
             )
             expect(signed.code, signed.text).to.equal(0)
             const sig = JSON.parse(readFileSync(signed.sigPath, 'utf8'))
-            // The same cycle with a changed funder scriptSig (OP_0 OP_DROP
-            // appended): another txid, the same machine and coin spends.
+            // A malleation that a node accepts: the S value of a keeper fee
+            // input signature flipped to n - S (high S is policy, not
+            // consensus). Another txid, the same cycle apart from the
+            // unlocking scripts.
             const variant = new bsv.Transaction(f.request.txHex)
             variant.inputs[f.request.funderInputIndex].setScript(
-                bsv.Script.fromHex(sig.unlockingScript + '0075')
+                bsv.Script.fromHex(sig.unlockingScript)
             )
-            expect(variant.id).to.not.equal(
-                new bsv.Transaction(f.request.txHex).id
+            const feeIndex = variant.inputs.findIndex(
+                (_, i) => i !== 0 && i !== f.request.funderInputIndex
             )
+            const feeScript = variant.inputs[feeIndex].script
+            const der = feeScript.chunks[0].buf as Buffer
+            const flipped = bsv.crypto.Signature.fromTxFormat(
+                der
+            ) as unknown as {
+                s: InstanceType<typeof bsv.crypto.BN>
+                toTxFormat(): Buffer
+            }
+            flipped.s = bsv.crypto.Point.getN().sub(flipped.s)
+            variant.inputs[feeIndex].setScript(
+                new bsv.Script('')
+                    .add(flipped.toTxFormat())
+                    .add(feeScript.chunks[1].buf as Buffer)
+            )
+            const honest = new bsv.Transaction(f.request.txHex)
+            honest.inputs[f.request.funderInputIndex].setScript(
+                bsv.Script.fromHex(sig.unlockingScript)
+            )
+            expect(variant.id).to.not.equal(honest.id)
             f.chain.add(variant)
             const sends = f.chain.cycleBroadcasts
             const done = await complete(f.chain, f.requestPath, signed.sigPath)
@@ -995,6 +1016,76 @@ describe('third-party top-up (topup offer, sign, complete)', function () {
             expect(done.text).to.contain('is on the chain already')
             expect(done.text).to.not.contain('expired')
             expect(f.chain.cycleBroadcasts).to.equal(sends)
+        })
+
+        it('complete refuses when another cycle of the same offer took the coin', async () => {
+            const f = await offered()
+            // A second keeper (another wallet) builds a request from the
+            // same offer at the same tip; the funder signs both.
+            const otherKeeper = new Keeper(
+                f.cfg,
+                f.chain,
+                new TestWallet(bsv.PrivateKey.fromRandom('testnet'), f.chain),
+                {
+                    chainInfo: async () => ({ mediantime: MTP, blocks: 1 }),
+                    spentBy: (op) => f.chain.spentBy(op),
+                }
+            )
+            const built = await otherKeeper.buildTopUpRequest(T0 + 100, f.offer)
+            expect(built.error).to.equal(undefined)
+            const otherPath = requestFile(built.request as TopUpRequest)
+            const mine = await sign(
+                f.chain,
+                f.funderCfg,
+                f.requestPath,
+                f.offerPath
+            )
+            const theirs = await sign(
+                f.chain,
+                f.funderCfg,
+                otherPath,
+                f.offerPath
+            )
+            expect(mine.code, mine.text).to.equal(0)
+            expect(theirs.code, theirs.text).to.equal(0)
+            const landedFirst = await complete(
+                f.chain,
+                otherPath,
+                theirs.sigPath
+            )
+            expect(landedFirst.code, landedFirst.text).to.equal(0)
+            const otherTxid = /txid ([0-9a-f]{64})/.exec(landedFirst.text)![1]
+            const done = await complete(f.chain, f.requestPath, mine.sigPath)
+            expect(done.code, done.text).to.equal(1)
+            expect(done.text).to.contain(
+                `the offered coin went into another cycle ${otherTxid}`
+            )
+            expect(done.text).to.contain('Do not make a new offer')
+            expect(done.text).to.not.contain('is on the chain already')
+            expect(done.text).to.not.contain('offer expired')
+        })
+
+        it('complete refuses, and does not say expired, when the spender cannot be read', async () => {
+            const f = await offered()
+            const signed = await sign(
+                f.chain,
+                f.funderCfg,
+                f.requestPath,
+                f.offerPath
+            )
+            expect(signed.code, signed.text).to.equal(0)
+            // A rival cycle spends the machine; the provider then cannot
+            // return it.
+            const rival = await keeperOn(f.cfg, f.chain).tick(T0 + 200)
+            expect(rival.txid).to.be.a('string')
+            f.chain.txs.delete(rival.txid as string)
+            const done = await complete(f.chain, f.requestPath, signed.sigPath)
+            expect(done.code, done.text).to.equal(1)
+            expect(done.text).to.contain(rival.txid as string)
+            expect(done.text).to.contain(
+                'check it before you build a new request'
+            )
+            expect(done.text).to.not.contain('offer expired')
         })
 
         it('complete refuses a signature of another request', async () => {

@@ -346,7 +346,12 @@ Last, `sign` signs its input with `SIGHASH_ALL | FORKID`. The signature covers a
 
 Trust note. The funder must take the `--machine` outpoint from the deploy output or from the config of the sponsor. The funder must never take it from the keeper. A copy of the machine looks the same at offer time. The lineage check starts from this outpoint, so it is the root of trust. Use a recent outpoint. The walk makes about two provider calls for each cycle since that outpoint, and it stops after 10 000 cycles.
 
-`complete` handles a late or repeated run. When another transaction spent the machine prevout, `complete` stops with `offer expired: the machine moved; build a new request`. When the spender is this cycle, `complete` reports success and sends nothing. The spender counts as this cycle when its txid is the same, or when it also spends the offered coin. The second case covers a variant of the transaction with a changed keeper signature.
+`complete` handles a late or repeated run. It looks at the transaction that spent the machine prevout:
+
+- The spender is this cycle: `complete` reports success and sends nothing. The spender counts as this cycle when it is the same transaction apart from the unlocking scripts. This covers a variant with a changed signature.
+- The spender is another cycle that also spends the offered coin (for example a second request from the same offer): `complete` stops with `the offered coin went into another cycle <txid>`. The top-up landed, but the cycle of this request did not go out. Do not make a new offer for this top-up.
+- The spender cannot be read: `complete` stops and names the spender. It can be this cycle, so check it before you build a new request.
+- Any other spender: `complete` stops with `offer expired: the machine moved; build a new request`.
 
 ### Crowd-funding
 
@@ -358,8 +363,9 @@ Several funders can top up the same machine. Each funder makes its own offer. Th
 - A blocked machine refunds to the beneficiary at `lastTime + deadMan`. The refund includes the top-ups.
 - The tools do not reserve coins between `request` and `complete`. If the keeper wallet or the funder spends a coin in that time, `complete` fails with a conflict error. Build a new request.
 - The coins of the funder must be P2PKH. The keeper inputs must be P2PKH too.
-- The funder reads the chain through its provider. A provider that lies can make the funder sign a transaction that never confirms. It cannot move the funds.
-- Machines deployed before the top-up change cannot take a top-up.
+- The funder reads the chain through its provider. A provider that lies can make the funder sign a transaction that never confirms. It cannot move the funds, if the `--machine` outpoint is genuine (see the trust note).
+- Machines deployed before the top-up change cannot take a top-up. This release cannot load them at all: the artifact gives a template mismatch (`TEMPLATE_MISMATCH`), so `keeper`, `gateway`, `admit`, `inspect` and the other commands stop. Keep the earlier release to run or halt such a machine.
+- The published disclosures (the K17 defensive publication) describe the earlier behaviour, with exact value conservation and no top-up.
 
 ## 6. Writing customized acceptance and removal flows (sponsor side)
 
@@ -485,7 +491,7 @@ The gateway signs, not the mote. The line `R <reading>` on the serial link has n
 
   The effect is that a rewritten transaction gets a new txid. It can orphan unconfirmed cycles that are chained after it. The lock time MTP - 1 and `MIN_STEP` limit keepers to at most one live cycle for each block. So a cycle rarely builds on an unconfirmed one (the tools accept such chains). A rewrite usually costs the keeper only a new plan.
 
-- **Cost per reading.** A tree-mode reading is one cycle transaction, so readings on one machine are sequential. `../k17-vm` measures the current K = 40 locking script at 182 986 bytes. A cycle that keeps the machine alive also carries the next state output, so it is about twice that size. The measured enrolment cycle is 366 514 bytes, and a tree reading is about the same, about 367 KB. The testnet runs in this repository (about 720 KB and about 720 satoshis in fees for each cycle) predate that reduction. At the same fee rate, a live cycle now costs about 370 satoshis (an estimate, not measured here). With the implemented keeper policy (lock time MTP - 1), a machine takes about one live cycle for each block, about 144 a day. Admissions and removals share these cycles. So a daily round serves at most about 140 members for each machine. More members need longer rounds or several machines.
+- **Cost per reading.** A tree-mode reading is one cycle transaction, so readings on one machine are sequential. `../k17-vm` measures the current K = 40 locking script at 183 012 bytes. A cycle that keeps the machine alive also carries the next state output, so it is about twice that size. The measured enrolment cycle is 366 568 bytes, and a tree reading is about the same, about 367 KB. The testnet runs in this repository (about 720 KB and about 720 satoshis in fees for each cycle) predate that reduction. At the same fee rate, a live cycle now costs about 370 satoshis (an estimate, not measured here). With the implemented keeper policy (lock time MTP - 1), a machine takes about one live cycle for each block, about 144 a day. Admissions and removals share these cycles. So a daily round serves at most about 140 members for each machine. More members need longer rounds or several machines.
 - **Trust in the sponsor.** Members trust the sponsor. It can remove any member at any time. The unspent deposit returns to the beneficiary that the sponsor chose. The chain guarantees only that each accepted reading is paid at once.
 - **Miner inclusion.** Any party can relay, but miners can still decline to mine a cycle. The chain does not guarantee inclusion.
 - **Dead-man after an MTP jump.** An MTP jump of `deadMan` or more lets any keeper end a healthy machine early.

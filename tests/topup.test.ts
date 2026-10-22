@@ -4,7 +4,8 @@
  * Covers: the `--top-up` parser and the five commands that read it
  * (`keeper`, `gateway run`, `admit`, `remove`, `endorse`); the keeper path
  * (the next machine output holds remaining + topUp, lastTime is the same as
- * without a top-up, the top-up rides on the first cycle only); the refusal
+ * without a top-up, the top-up rides on the first cycle only, a foreign
+ * cycle never counts as the keeper's own top-up); the refusal
  * of a top-up on a halting cycle (nothing is broadcast); the history decoder
  * (chunk 10 of the unlocking script is `topUp`); and the `inspect --history`
  * line. The chain is in memory; no test uses the network.
@@ -375,6 +376,63 @@ describe('top-up', function () {
             const cycles = await walkHistory(chain, next.outpoint!)
             expect(cycles.map((c) => c.topUp)).to.deep.equal([TOP_UP, 0n])
             expect(keeper.unaddedTopUp).to.equal(0n)
+        })
+
+        it('a foreign cycle at the lock time of a failed attempt does not clear the pending top-up', async () => {
+            // Case 1: another keeper address with the same top-up and lock
+            // time. Case 2: the same keeper address with no top-up.
+            const cases: {
+                name: string
+                foreign: (chain: MemoryChain) => TestWallet
+                foreignTopUp?: bigint
+            }[] = [
+                {
+                    name: 'another keeper address',
+                    foreign: (chain) =>
+                        new TestWallet(
+                            bsv.PrivateKey.fromRandom('testnet'),
+                            chain
+                        ),
+                    foreignTopUp: TOP_UP,
+                },
+                {
+                    name: 'the same keeper address, top-up 0',
+                    foreign: (chain) => new TestWallet(WALLET_KEY, chain),
+                },
+            ]
+            for (const { name, foreign, foreignTopUp } of cases) {
+                const { chain, signer } = setup()
+                const { cfg } = await deployed(
+                    chain,
+                    signer,
+                    heartbeatProgram()
+                )
+                const keeper = keeperOn(cfg, chain, signer, TOP_UP)
+                chain.failNext = 'before'
+                const failed = await keeper.tick(T0 + 100)
+                expect(failed.txid, name).to.equal(undefined)
+                // The foreign cycle lands at the lock time of the attempt.
+                const other = await keeperOn(
+                    cfg,
+                    chain,
+                    foreign(chain),
+                    foreignTopUp
+                ).tick(T0 + 100)
+                expect(other.txid, name).to.be.a('string')
+                const next = await keeper.tick(T0 + 200)
+                expect(next.error, name).to.equal(undefined)
+                expect(next.resynced, name).to.equal(true)
+                expect(next.topUpLanded, name).to.equal(undefined)
+                expect(next.topUp, name).to.equal(TOP_UP)
+                const later = await keeper.tick(T0 + 300)
+                expect(later.topUp, name).to.equal(undefined)
+                const cycles = await walkHistory(chain, later.outpoint!)
+                expect(
+                    cycles.map((c) => c.topUp),
+                    name
+                ).to.deep.equal([foreignTopUp ?? 0n, TOP_UP, 0n])
+                expect(keeper.unaddedTopUp, name).to.equal(0n)
+            }
         })
 
         it('a wallet-funded top-up cycle has no output but the machine, the reward and the change', async () => {

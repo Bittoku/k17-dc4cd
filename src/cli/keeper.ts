@@ -10,20 +10,28 @@
  * goes on (the next tick can halt the machine). Broadcast errors are printed and
  * the loop goes on; the keeper itself retries a conflicting spend once per
  * tick. A mainnet config needs `--i-know-this-spends-real-money`, because
- * the keeper pays fees.
+ * the keeper pays fees. `--top-up-offer` (a funder's coin) is refused with
+ * exit code 2: it needs one cycle that waits for the funder, and the keeper
+ * runs a loop.
  */
 
 import type { Provider, Signer } from 'scrypt-ts'
 import { describeConfig, hideSecrets, loadConfig } from '../chain/config'
 import { Keeper, KeeperOptions, TickResult } from '../chain/keeper'
 import { makeProvider, makeSigner } from '../chain/provider'
-import { parseFlags, parseTopUp } from './flags'
+import {
+    TOP_UP_BOTH,
+    offerRefusedInLoop,
+    parseFlags,
+    parseTopUp,
+} from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the keeper sub-command. */
 export const KEEPER_USAGE = `usage: k17forth keeper --config <gw.toml> [--interval <seconds>] [--top-up <sats>] [--i-know-this-spends-real-money]
          --top-up <sats>: add sats to the machine escrow with the first cycle that goes out (once, not every cycle);
-         the wallet of this command pays it; a cycle that halts the machine takes no top-up and the keeper drops it`
+         the wallet of this command pays it; a cycle that halts the machine takes no top-up and the keeper drops it
+         (--top-up-offer is refused here: the keeper runs a loop; use admit, remove or endorse for a funder offer)`
 
 /** Switch that allows a keeper on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -74,7 +82,8 @@ export function tickLine(result: TickResult): string {
  * Run the keeper sub-command.
  * Input: arguments after `keeper`, an output sink and optional test parts.
  * Output: exit code: 0 when the loop ends (machine halted or tick limit),
- * 1 when the config cannot be used, 2 on wrong arguments.
+ * 1 when the config cannot be used, 2 on wrong arguments (also for
+ * `--top-up-offer`, which a loop does not take).
  */
 export async function keeperCommand(
     args: string[],
@@ -83,12 +92,22 @@ export async function keeperCommand(
 ): Promise<number> {
     const parsed = parseFlags(
         args,
-        ['config', 'interval', 'top-up'],
+        ['config', 'interval', 'top-up', 'top-up-offer'],
         [MAINNET_SWITCH]
     )
     if (typeof parsed === 'string') {
         io.err(parsed)
         io.err(KEEPER_USAGE)
+        return 2
+    }
+    // A funder offer needs one cycle that waits for the funder; the keeper
+    // runs a loop, so it refuses the offer.
+    if (parsed.values.has('top-up-offer')) {
+        io.err(
+            parsed.values.has('top-up')
+                ? TOP_UP_BOTH
+                : offerRefusedInLoop('keeper')
+        )
         return 2
     }
     const config = parsed.values.get('config')

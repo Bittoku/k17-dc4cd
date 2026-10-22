@@ -24,6 +24,10 @@
  *   keeper follows the machine forward from the known outpoint (spends
  *   lookup), then tries once more. A second failure is returned as
  *   `{ error }`; the keeper never loops.
+ * - Third-party top-up: `buildTopUpRequest` plans the cycle with a funder's
+ *   offer and builds the final transaction with the funder's coin as an
+ *   input, but broadcasts nothing and does not move the keeper on; the
+ *   cycle lands later through `topup complete` (see `./topup`).
  *
  * No result or error text contains the wallet key or the Rabin primes.
  */
@@ -31,6 +35,7 @@
 import { Provider, Signer, bsv } from 'scrypt-ts'
 import { RabinPubKey, RabinSig } from 'scrypt-ts-lib'
 import {
+    CyclePlan,
     CycleTree,
     K17Machine,
     NO_SIG,
@@ -46,6 +51,14 @@ import { GatewayConfig, hideSecrets, startOutpoint } from './config'
 import { ChainInfo, FetchLike, chainInfo, wocFetch } from './provider'
 import { Outpoint, decodeUnlocking, parseOutpoint } from './history'
 import { decodeMachine } from './decode'
+import {
+    REQUEST_KIND,
+    TOPUP_FILE_VERSION,
+    TopUpOffer,
+    TopUpRequest,
+    buildFundedCycle,
+    offerCoin,
+} from './topup'
 
 /** A signed input that the keeper gives to the next cycle that needs one. */
 export interface PendingInput {
@@ -122,6 +135,31 @@ export interface TickResult {
     /** Why the tick did nothing, for example "needs witness". */
     skipped?: string
     /** Why the tick failed. Contains no secret. */
+    error?: string
+}
+
+/**
+ * What `Keeper.buildTopUpRequest` did. Exactly one of `request`, `skipped`
+ * and `error` is set.
+ */
+export interface TopUpRequestResult {
+    /** The request for the funder (nothing was broadcast). */
+    request?: TopUpRequest
+    /** Median time past that the lock time was clamped to. */
+    mtp?: number
+    /** nLockTime of the cycle in the request. */
+    lockTime?: number
+    /** Keeper reward of the cycle in the request. */
+    reward?: bigint
+    /** Value of the next machine output: remaining + top-up. */
+    machineValue?: bigint
+    /** True when the cycle halts the machine, so no top-up can go on it. */
+    topUpRefused?: boolean
+    /** True when the machine is halted. */
+    halted?: boolean
+    /** Why no request was built now, for example "needs witness". */
+    skipped?: string
+    /** Why the request failed. Contains no secret. */
     error?: string
 }
 
@@ -383,6 +421,142 @@ export class Keeper {
     }
 
     /**
+     * Build a cycle that a third-party funder tops up, and stop before the
+     * funder signs (`--top-up-offer`). Nothing is broadcast and the keeper
+     * state does not move on: the cycle lands only through `topup complete`.
+     * The keeper first follows the machine to its unspent tip, plans the
+     * cycle with `topUp` = the offer amount (the keeper's own pending top-up
+     * is not used), checks that the offer is for this machine and that the
+     * coin on the chain holds exactly the amount on the funder's script, and
+     * builds the final transaction with the coin as an input
+     * (`buildFundedCycle`): every keeper input is signed, the funder input is
+     * empty.
+     * Input: the wall clock, the offer, optionally a signed input and the
+     * MTP that `chainTime` read. Output: `{ request }` (also the plan's
+     * reward, lock time and the next machine value), `{ skipped }` (needs a
+     * witness, waiting for MTP, machine halted) or `{ error }`; a halting
+     * cycle gives `topUpRefused` with an error. Never throws for chain
+     * errors; no error text holds a secret.
+     */
+    async buildTopUpRequest(
+        now: number,
+        offer: TopUpOffer,
+        input?: PendingInput,
+        knownMtp?: number
+    ): Promise<TopUpRequestResult> {
+        const result = await this.buildTopUpRequestOnce(
+            now,
+            offer,
+            input,
+            knownMtp
+        )
+        return result.error
+            ? { ...result, error: hideSecrets(result.error, this.cfg) }
+            : result
+    }
+
+    /**
+     * The work of `buildTopUpRequest`, before the secrets are hidden.
+     * Input and output: as `buildTopUpRequest`.
+     */
+    private async buildTopUpRequestOnce(
+        now: number,
+        offer: TopUpOffer,
+        input?: PendingInput,
+        knownMtp?: number
+    ): Promise<TopUpRequestResult> {
+        if (offer.network !== this.cfg.network)
+            return {
+                error: `the offer is for ${offer.network}, this config for ${this.cfg.network}`,
+            }
+        let mtp: number
+        if (knownMtp !== undefined) mtp = knownMtp
+        else
+            try {
+                mtp = (await this.readChain()).mediantime
+            } catch (e) {
+                return { error: `chain info: ${messageOf(e)}` }
+            }
+        try {
+            if (!(await this.sync())) return { mtp, ...HALTED }
+        } catch (e) {
+            return { mtp, error: `sync: ${messageOf(e)}` }
+        }
+        const current = this.current as Current
+        const planned = await this.planAt(
+            current,
+            now,
+            mtp,
+            input,
+            BigInt(offer.amount)
+        )
+        if (planned.haltingTopUp)
+            return {
+                mtp,
+                topUpRefused: true,
+                error: `top-up of ${offer.amount} sats refused: this cycle halts the machine, and a halting cycle takes no top-up (no request written)`,
+            }
+        if (!planned.cycle) return planned.result as TopUpRequestResult
+        const { m, plan, keeper, lockTime } = planned.cycle
+        if (m.instanceId.toLowerCase() !== offer.instanceId)
+            return {
+                mtp,
+                error: `the offer is for machine ${offer.instanceId}, but the tip is machine ${m.instanceId}`,
+            }
+        const coin = offerCoin(offer)
+        try {
+            const coinTx = await this.provider.getTransaction(coin.txId)
+            const out = coinTx.outputs[coin.outputIndex]
+            if (
+                !out ||
+                BigInt(out.satoshis) !== coin.satoshis ||
+                out.script.toHex() !== coin.script
+            )
+                return {
+                    mtp,
+                    error: `the offered coin ${offer.coin} does not hold ${offer.amount} sats on the funder key`,
+                }
+        } catch (e) {
+            return {
+                mtp,
+                error: `offered coin ${offer.coin}: ${messageOf(e)}`,
+            }
+        }
+        let funded
+        try {
+            await m.connect(this.signer)
+            funded = await buildFundedCycle(
+                m,
+                plan,
+                keeper,
+                BigInt(lockTime),
+                coin
+            )
+        } catch (e) {
+            return { mtp, error: `build: ${messageOf(e)}` }
+        }
+        const txHex = funded.tx.uncheckedSerialize()
+        return {
+            mtp,
+            lockTime,
+            reward: plan.reward,
+            machineValue: plan.remaining + plan.topUp,
+            request: {
+                kind: REQUEST_KIND,
+                version: TOPUP_FILE_VERSION,
+                network: offer.network,
+                instanceId: offer.instanceId,
+                machinePrevout: `${current.tx.id}:${current.vout}`,
+                machineInputIndex: funded.machineInputIndex,
+                funderInputIndex: funded.funderInputIndex,
+                amount: offer.amount,
+                coin: offer.coin,
+                txHex,
+            },
+        }
+    }
+
+    /**
      * The work of `tick`, before the secrets are hidden.
      * Input and output: as `tick`.
      */
@@ -496,18 +670,33 @@ export class Keeper {
     }
 
     /**
-     * Plan and broadcast one cycle from `current`.
-     * Input: the machine output, wall clock, MTP and the pending input.
-     * Output: `{ result }` when the tick is done (success, skip, or an error
-     * that is not a broadcast error), or `{ broadcastError }` when the
-     * broadcast failed and the caller decides on a retry.
+     * Plan one cycle from `current` (no broadcast). Shared by `advance`
+     * (a broadcast tick) and `buildTopUpRequest` (a funded cycle that waits
+     * for its funder).
+     * Input: the machine output, wall clock, MTP, the pending input and the
+     * top-up for this cycle.
+     * Output: `{ cycle }` with the machine, the plan, the keeper address and
+     * the lock time, or `{ result }` when no cycle can be planned now (halted
+     * machine, foreign tip, waiting, wallet or plan error). `haltingTopUp`
+     * is true when the plan was refused only because the cycle halts and a
+     * top-up was asked for; the caller decides what to do with the top-up.
      */
-    private async advance(
+    private async planAt(
         current: Current,
         now: number,
         mtp: number,
-        input?: PendingInput
-    ): Promise<{ result?: TickResult; broadcastError?: string }> {
+        input: PendingInput | undefined,
+        topUp: bigint
+    ): Promise<{
+        cycle?: {
+            m: K17Machine
+            plan: CyclePlan
+            keeper: bsv.Address
+            lockTime: number
+        }
+        result?: TickResult
+        haltingTopUp?: boolean
+    }> {
         const output = current.tx.outputs[current.vout]
         if (!output || !decodeMachine(output.script.toHex()).machine) {
             // A spend that ended the machine leaves no machine at output 0.
@@ -542,9 +731,8 @@ export class Keeper {
         } catch (e) {
             return { result: { mtp, error: `wallet: ${messageOf(e)}` } }
         }
-        let plan
         try {
-            plan = planCycle(
+            const plan = planCycle(
                 m,
                 value,
                 BigInt(lockTime),
@@ -557,24 +745,16 @@ export class Keeper {
                     payoutHex: input?.payoutHex,
                 },
                 input?.tree,
-                { topUp: this.pendingTopUp }
+                { topUp }
             )
+            return { cycle: { m, plan, keeper, lockTime } }
         } catch (e) {
             const message = messageOf(e)
-            // A halting cycle takes no top-up: refuse before any broadcast
-            // and drop the top-up so the next tick can halt the machine.
-            if (/halting cycle takes no top-up/.test(message)) {
-                const dropped = this.pendingTopUp
-                this.droppedTopUp += dropped
-                this.pendingTopUp = 0n
+            if (/halting cycle takes no top-up/.test(message))
                 return {
-                    result: {
-                        mtp,
-                        topUpRefused: true,
-                        error: `top-up of ${dropped} sats refused: this cycle halts the machine, and a halting cycle takes no top-up (top-up dropped, nothing sent)`,
-                    },
+                    haltingTopUp: true,
+                    result: { mtp, topUpRefused: true, error: message },
                 }
-            }
             if (/needs a witness/.test(message))
                 return { result: { mtp, skipped: 'needs witness' } }
             // The chain clock has not advanced MIN_STEP past lastTime yet.
@@ -582,6 +762,45 @@ export class Keeper {
                 return { result: { mtp, skipped: WAITING_FOR_MTP } }
             return { result: { mtp, error: `plan: ${message}` } }
         }
+    }
+
+    /**
+     * Plan and broadcast one cycle from `current`.
+     * Input: the machine output, wall clock, MTP and the pending input.
+     * Output: `{ result }` when the tick is done (success, skip, or an error
+     * that is not a broadcast error), or `{ broadcastError }` when the
+     * broadcast failed and the caller decides on a retry.
+     */
+    private async advance(
+        current: Current,
+        now: number,
+        mtp: number,
+        input?: PendingInput
+    ): Promise<{ result?: TickResult; broadcastError?: string }> {
+        const planned = await this.planAt(
+            current,
+            now,
+            mtp,
+            input,
+            this.pendingTopUp
+        )
+        if (planned.haltingTopUp) {
+            // A halting cycle takes no top-up: refuse before any broadcast
+            // and drop the top-up so the next tick can halt the machine.
+            const dropped = this.pendingTopUp
+            this.droppedTopUp += dropped
+            this.pendingTopUp = 0n
+            return {
+                result: {
+                    mtp,
+                    topUpRefused: true,
+                    error: `top-up of ${dropped} sats refused: this cycle halts the machine, and a halting cycle takes no top-up (top-up dropped, nothing sent)`,
+                },
+            }
+        }
+        if (!planned.cycle) return { result: planned.result }
+        const { m, plan, keeper } = planned.cycle
+        const lockTime = planned.cycle.lockTime
         try {
             await m.connect(this.signer)
             const options = bindCycleBuilder(m, plan, keeper, BigInt(lockTime))

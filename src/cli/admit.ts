@@ -23,6 +23,13 @@
  * the sequence number stale, the command reloads the mirror once, signs again
  * and retries; a second failure ends the command.
  *
+ * With `--top-up-offer <offer.json>` the cycle carries a funder's top-up:
+ * the command builds the final cycle with the funder's coin
+ * (`Keeper.buildTopUpRequest`), writes `topup-request.json` (or
+ * `--request-out`), prints the next steps and sends nothing; `topup
+ * complete` sends it later. `--top-up` and `--top-up-offer` together are a
+ * usage error.
+ *
  * Exports: `ADMIT_USAGE`, `REMOVE_USAGE`, `SponsorDeps`, `admitCommand`,
  * `removeCommand`. No output contains a prime or the wallet key.
  */
@@ -63,18 +70,24 @@ import { makeProvider, makeSigner } from '../chain/provider'
 import { RosterMirror } from '../chain/roster'
 import { checkInstance, rabinKeyOf } from '../gateway/attester'
 import { ADMIT_TAG, REMOVE_TAG } from '../programs/treeConsortium'
-import { parseFlags, parseTopUp } from './flags'
+import { TOP_UP_BOTH, TOP_UP_OFFER_HELP, parseFlags, parseTopUp } from './flags'
+import { loadOffer, requestNextSteps, writeRequest } from './topup'
+import type { TopUpOffer } from '../chain/topup'
 import type { CliIo } from './k17forth'
 
 /** Help text of the admit sub-command. */
 export const ADMIT_USAGE = `usage: k17forth admit <sponsor.toml> --member-key <pubkey file> --payout <address>
-         [--index <n>] [--top-up <sats>] [--i-know-this-spends-real-money]
-         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it`
+         [--index <n>] [--top-up <sats> | --top-up-offer <offer.json> [--request-out <file>]]
+         [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it
+         ${TOP_UP_OFFER_HELP}`
 
 /** Help text of the remove sub-command. */
 export const REMOVE_USAGE = `usage: k17forth remove <sponsor.toml> (--member-key <pubkey file> | --index <n>)
-         [--top-up <sats>] [--i-know-this-spends-real-money]
-         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it`
+         [--top-up <sats> | --top-up-offer <offer.json> [--request-out <file>]]
+         [--i-know-this-spends-real-money]
+         --top-up <sats>: add sats to the machine escrow with the cycle; the wallet of this command pays it
+         ${TOP_UP_OFFER_HELP}`
 
 /** Switch that allows an admin cycle on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -300,7 +313,8 @@ type Kind = 'admit' | 'remove'
  * Input: the kind, the arguments after the command name, an output sink and
  * the test parts.
  * Output: exit code: 0 when the cycle went out and the machine holds the
- * predicted root and sequence number; 1 for a refusal (key or leaf state,
+ * predicted root and sequence number, or (with `--top-up-offer`) when the
+ * request file was written; 1 for a refusal (key or leaf state,
  * wrong sponsor key, machine ended or halted, waiting for MTP) or a failed
  * relay; 2 for wrong arguments or a refused mainnet config.
  */
@@ -314,8 +328,15 @@ async function sponsorCommand(
     const parsed = parseFlags(
         args,
         kind === 'admit'
-            ? ['member-key', 'payout', 'index', 'top-up']
-            : ['member-key', 'index', 'top-up'],
+            ? [
+                  'member-key',
+                  'payout',
+                  'index',
+                  'top-up',
+                  'top-up-offer',
+                  'request-out',
+              ]
+            : ['member-key', 'index', 'top-up', 'top-up-offer', 'request-out'],
         [MAINNET_SWITCH]
     )
     if (typeof parsed === 'string') {
@@ -333,12 +354,23 @@ async function sponsorCommand(
         io.err(usage)
         return 2
     }
+    if (flag('top-up') !== undefined && flag('top-up-offer') !== undefined) {
+        io.err(TOP_UP_BOTH)
+        io.err(usage)
+        return 2
+    }
+    if (flag('request-out') !== undefined && !flag('top-up-offer')) {
+        io.err('--request-out needs --top-up-offer')
+        io.err(usage)
+        return 2
+    }
     const topUp = parseTopUp(flag('top-up'))
     if (typeof topUp === 'string') {
         io.err(topUp)
         io.err(usage)
         return 2
     }
+    const requestOut = flag('request-out') ?? 'topup-request.json'
     let hide: (text: string) => string = (text) => text
     const say = (line: string) => io.out(hide(line))
     const fail = (line: string) => io.err(hide(`${kind}: ${line}`))
@@ -361,6 +393,9 @@ async function sponsorCommand(
             ? leafIndexOf(flag('index') as string)
             : undefined
         const sponsor = rabinKeyOf(cfg)
+        const offer: TopUpOffer | undefined = flag('top-up-offer')
+            ? loadOffer(flag('top-up-offer') as string)
+            : undefined
         const provider = deps.provider ?? makeProvider(cfg.network)
         let signer: Signer
         try {
@@ -495,6 +530,35 @@ async function sponsorCommand(
                 BigInt(operation.index)
             )
 
+            if (offer) {
+                // A funder pays the top-up: build the cycle with the
+                // funder's coin, write the request, send nothing.
+                const built = await keeper.buildTopUpRequest(
+                    attemptTime,
+                    offer,
+                    operation.input,
+                    mtp
+                )
+                if (!built.request) {
+                    if (built.skipped === WAITING_FOR_MTP)
+                        throw new Refusal(MTP_HINT)
+                    throw new Refusal(
+                        built.error ?? built.skipped ?? 'no request was built'
+                    )
+                }
+                writeRequest(requestOut, built.request)
+                for (const line of requestNextSteps(
+                    requestOut,
+                    built.request,
+                    built.lockTime,
+                    built.machineValue,
+                    `The ${
+                        kind === 'admit' ? 'admission' : 'removal'
+                    } of leaf ${operation.index}`
+                ))
+                    say(line)
+                return 0
+            }
             const result = await keeper.tick(attemptTime, operation.input, mtp)
             if (!result.txid) {
                 if (result.skipped === WAITING_FOR_MTP)

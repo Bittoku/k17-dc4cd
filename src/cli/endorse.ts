@@ -16,6 +16,13 @@
  * endorsement yet (its first cycle has not run), the command runs that one
  * cycle first. It prints the txid and the slot. It never prints a prime or
  * the wallet key. A mainnet config needs `--i-know-this-spends-real-money`.
+ *
+ * With `--top-up-offer <offer.json>` the endorsement cycle carries a
+ * funder's top-up: a cycle before it goes out as usual (no top-up), then
+ * the command builds the endorsement cycle with the funder's coin
+ * (`Keeper.buildTopUpRequest`), writes `topup-request.json` (or
+ * `--request-out`) and sends nothing. `--top-up` and `--top-up-offer`
+ * together are a usage error.
  */
 
 import type { Provider, Signer } from 'scrypt-ts'
@@ -46,14 +53,18 @@ import { makeProvider, makeSigner } from '../chain/provider'
 import { checkInstance, rabinKeyOf, tagOptions } from '../gateway/attester'
 import { endorseTag } from '../programs/consortium'
 import { tickLine } from './keeper'
-import { parseFlags, parseTopUp } from './flags'
+import { TOP_UP_BOTH, TOP_UP_OFFER_HELP, parseFlags, parseTopUp } from './flags'
+import { loadOffer, requestNextSteps, writeRequest } from './topup'
+import type { TopUpOffer } from '../chain/topup'
 import type { CliIo } from './k17forth'
 
 /** Help text of the endorse sub-command. */
 export const ENDORSE_USAGE = `usage: k17forth endorse --config <sponsor.toml> --member <public key hex>
-         --payout <address> --slot <n> [--top-up <sats>] [--i-know-this-spends-real-money]
+         --payout <address> --slot <n> [--top-up <sats> | --top-up-offer <offer.json> [--request-out <file>]]
+         [--i-know-this-spends-real-money]
          --top-up <sats>: add sats to the machine escrow with the first cycle that goes out;
-         the wallet of this command pays it`
+         the wallet of this command pays it
+         ${TOP_UP_OFFER_HELP}; the offer goes on the endorsement cycle, not on a cycle before it`
 
 /** Switch that allows an endorsement on a mainnet machine. */
 const MAINNET_SWITCH = 'i-know-this-spends-real-money'
@@ -124,7 +135,8 @@ function payoutHash(text: string, network: GatewayConfig['network']): string {
 /**
  * Run the endorse sub-command.
  * Input: arguments after `endorse`, an output sink and optional test parts.
- * Output: exit code: 0 when the slot holds the member key; 1 when the
+ * Output: exit code: 0 when the slot holds the member key, or (with
+ * `--top-up-offer`) when the request file was written; 1 when the
  * config cannot be used, the key is not the sponsor's, or the chain work
  * fails; 2 on wrong arguments or a refused mainnet config.
  */
@@ -135,7 +147,15 @@ export async function endorseCommand(
 ): Promise<number> {
     const parsed = parseFlags(
         args,
-        ['config', 'member', 'payout', 'slot', 'top-up'],
+        [
+            'config',
+            'member',
+            'payout',
+            'slot',
+            'top-up',
+            'top-up-offer',
+            'request-out',
+        ],
         [MAINNET_SWITCH]
     )
     if (typeof parsed === 'string') {
@@ -149,12 +169,23 @@ export async function endorseCommand(
         io.err(ENDORSE_USAGE)
         return 2
     }
+    if (flag('top-up') !== undefined && flag('top-up-offer') !== undefined) {
+        io.err(TOP_UP_BOTH)
+        io.err(ENDORSE_USAGE)
+        return 2
+    }
+    if (flag('request-out') !== undefined && !flag('top-up-offer')) {
+        io.err('--request-out needs --top-up-offer')
+        io.err(ENDORSE_USAGE)
+        return 2
+    }
     const topUp = parseTopUp(flag('top-up'))
     if (typeof topUp === 'string') {
         io.err(topUp)
         io.err(ENDORSE_USAGE)
         return 2
     }
+    const requestOut = flag('request-out') ?? 'topup-request.json'
     let hide: (text: string) => string = (text) => text
     const say = (line: string) => io.out(hide(line))
     try {
@@ -181,6 +212,9 @@ export async function endorseCommand(
                 'config: [machine] instance_id (64 hex characters) is required'
             )
         const sponsor = rabinKeyOf(cfg)
+        const offer: TopUpOffer | undefined = flag('top-up-offer')
+            ? loadOffer(flag('top-up-offer') as string)
+            : undefined
         const provider = deps.provider ?? makeProvider(cfg.network)
         let signer: Signer
         try {
@@ -234,6 +268,38 @@ export async function endorseCommand(
                 io.err(hide(`endorse: ${tickLine(first)}`))
                 if (first.skipped === WAITING_FOR_MTP) io.err(MTP_HINT)
                 return 1
+            }
+            if (offer) {
+                // A funder pays the top-up of the endorsement cycle: write
+                // the request, send nothing.
+                const built = await keeper.buildTopUpRequest(
+                    now(),
+                    offer,
+                    input,
+                    mtp
+                )
+                if (!built.request) {
+                    io.err(
+                        hide(
+                            `endorse: ${
+                                built.error ??
+                                `skipped: ${built.skipped ?? 'no request'}`
+                            }`
+                        )
+                    )
+                    if (built.skipped === WAITING_FOR_MTP) io.err(MTP_HINT)
+                    return 1
+                }
+                writeRequest(requestOut, built.request)
+                for (const line of requestNextSteps(
+                    requestOut,
+                    built.request,
+                    built.lockTime,
+                    built.machineValue,
+                    `The endorsement of slot ${slot}`
+                ))
+                    say(line)
+                return 0
             }
             const result = await keeper.tick(now(), input, mtp)
             if (!result.txid) {

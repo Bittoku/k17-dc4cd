@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Entry point of the k17forth tool: dispatches to the `compile`, `run`,
- * `repl`, `inspect`, `deploy`, `inscribe-genesis`, `admit`, `remove`, `endorse`, `keeper` and
- * `gateway` sub-commands. `main` takes the arguments and an output sink so
+ * `repl`, `inspect`, `deploy`, `inscribe-genesis`, `admit`, `remove`, `endorse`, `keeper`,
+ * `gateway` and `topup` sub-commands. `main` takes the arguments and an output sink so
  * tests can call it without a process.
  */
 
@@ -16,6 +16,7 @@ import { endorseCommand } from './endorse'
 import { admitCommand, removeCommand } from './admit'
 import { keeperCommand } from './keeper'
 import { gatewayCommand } from './gateway'
+import { topupCommand } from './topup'
 import { loadK17Artifact } from '../chain/artifact'
 
 /** Commands that make or read K17 machines: they need the artifact. */
@@ -28,6 +29,7 @@ const CHAIN_COMMANDS = [
     'endorse',
     'keeper',
     'gateway',
+    'topup',
 ]
 
 /** Where a command writes its text. */
@@ -68,17 +70,28 @@ commands:
                                           sponsor: remove a member from a tree-mode roster
   endorse --config <sponsor.toml> --member <public key hex> --payout <addr> --slot <n>
                                           sponsor: enrol a landowner's key into a roster slot
+                                          admit, remove, endorse: --top-up <sats> pays a top-up from
+                                          this wallet; --top-up-offer <offer.json> uses a funder's coin
+                                          and writes topup-request.json (nothing is sent)
   keeper --config <gw.toml> [--interval <seconds>]
                                           advance the machine in the config, one cycle per tick
   gateway init --config <gw.toml>         make the attester key, print what the sponsor needs
   gateway run --config <gw.toml> [--interval <seconds>] [--once]
-                                          sign bridge readings and relay them to the machine`
+                                          sign bridge readings and relay them to the machine
+                                          keeper, gateway run: --top-up <sats> on the first cycle;
+                                          they refuse --top-up-offer (they run a loop)
+  topup offer <funder.toml> --machine <outpoint> --amount <sats> [--out offer.json]
+                                          funder: make a coin of exactly <sats>, write the offer
+  topup sign <funder.toml> <topup-request.json> [--offer offer.json] [--out sig.json]
+                                          funder: check the request on the chain, sign the coin
+  topup complete <topup-request.json> <sig.json>
+                                          keeper: add the funder signature and send the cycle`
 
 /**
  * Run the tool.
  * Input: arguments (without node and script name) and an output sink.
  * Output: exit code, or a promise of it for `inspect`, `deploy`,
- * `endorse`, `keeper` and `gateway`, which use the chain.
+ * `endorse`, `keeper`, `gateway` and `topup`, which use the chain.
  * The chain commands load the K17Machine artifact first.
  * The repl is asynchronous, so for `repl` this returns 0 when the session has
  * started and the process stays open until it ends.
@@ -112,6 +125,8 @@ export function main(
             return keeperCommand(rest, io)
         case 'gateway':
             return gatewayCommand(rest, io)
+        case 'topup':
+            return topupCommand(rest, io)
         default:
             io.err(USAGE)
             return 2

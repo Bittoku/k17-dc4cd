@@ -20,7 +20,9 @@
  * after each relay. `--top-up <sats>` adds sats to the machine escrow with the
  * FIRST cycle that goes out (once, not every cycle); the wallet pays it. A
  * halting cycle takes no top-up: it is refused, dropped, and the run goes on.
- * A mainnet config needs
+ * `--top-up-offer` (a funder's coin) is refused with exit code 2, also with
+ * `--once`: the run makes more than one cycle, and an offer needs one cycle
+ * that waits for the funder. A mainnet config needs
  * `--i-know-this-spends-real-money`, because the keeper pays fees.
  */
 
@@ -36,7 +38,12 @@ import { KeeperOptions } from '../chain/keeper'
 import { makeProvider, makeSigner } from '../chain/provider'
 import { Gateway } from '../gateway/gateway'
 import { payoutAddressOf } from '../gateway/attester'
-import { parseFlags, parseTopUp } from './flags'
+import {
+    TOP_UP_BOTH,
+    offerRefusedInLoop,
+    parseFlags,
+    parseTopUp,
+} from './flags'
 import type { CliIo } from './k17forth'
 
 /** Help text of the gateway sub-commands. */
@@ -44,6 +51,7 @@ export const GATEWAY_USAGE = `usage: k17forth gateway init --config <gw.toml>
        k17forth gateway run --config <gw.toml> [--interval <seconds>] [--once] [--top-up <sats>] [--i-know-this-spends-real-money]
          --top-up <sats>: add sats to the machine escrow with the first cycle that goes out (once, not every cycle);
          the wallet of this command pays it; a cycle that halts the machine takes no top-up and the gateway drops it
+         (--top-up-offer is refused here, also with --once: use admit, remove or endorse for a funder offer)
        ([gateway] mode = "tree" in the config makes the gateway a roster member; the default is "slots")`
 
 /** Switch that allows a gateway on a mainnet machine. */
@@ -159,12 +167,23 @@ async function runGateway(
 ): Promise<number> {
     const parsed = parseFlags(
         args,
-        ['config', 'interval', 'top-up'],
+        ['config', 'interval', 'top-up', 'top-up-offer'],
         [MAINNET_SWITCH, 'once']
     )
     if (typeof parsed === 'string') {
         io.err(parsed)
         io.err(GATEWAY_USAGE)
+        return 2
+    }
+    // A funder offer needs one cycle that waits for the funder. The gateway
+    // runs a loop of cycles, also with --once (attest and pay cycles, timer
+    // ticks), so it refuses the offer.
+    if (parsed.values.has('top-up-offer')) {
+        io.err(
+            parsed.values.has('top-up')
+                ? TOP_UP_BOTH
+                : offerRefusedInLoop('gateway run')
+        )
         return 2
     }
     const config = parsed.values.get('config')
